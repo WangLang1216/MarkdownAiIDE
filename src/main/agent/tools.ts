@@ -10,6 +10,7 @@ import { parseOutline, parseSections, countText, toPlainExcerpt } from '@shared/
 import type { DocumentService } from '../documents/service'
 import type { WorkspaceService } from '../workspace/service'
 import type { ChangeService } from '../changes/service'
+import { planOperation } from '../changes/engine'
 import type { ReferenceService, ContextBundle } from '../references/service'
 
 const MAX_TOOL_RESULT = 24_000
@@ -246,6 +247,8 @@ export interface ToolContext {
   taskId: string
   /** 当前任务初始关联的活动文稿会话标识。 */
   activeDocumentId: string | null
+  /** 任务启动时的工作区，阻止切换工作区后改写其他文件。 */
+  workspaceId: string | null
   /** 限定工具运行在选区、文稿或工作区范围。 */
   scope: 'selection' | 'document' | 'workspace'
   /** 用于限定上下文或操作目标的当前源码选区。 */
@@ -547,19 +550,24 @@ export class AgentTools {
   }
 
   private async propose(raw: Record<string, unknown>, context: ToolContext): Promise<ToolOutcome> {
+    if (context.scope === 'workspace' && (!context.workspaceId ||
+        this.deps.workspace.getCurrent()?.workspaceId !== context.workspaceId)) {
+      throw new AppError('OUT_OF_SCOPE', '任务的工作区已变化，请重新发起任务。')
+    }
     const operations = Array.isArray(raw.operations) ? (raw.operations as ChangeOperation[]) : []
     for (const operation of operations) {
       if ('guard' in operation && !context.allowedDocumentIds.has(operation.guard.documentId)) {
         throw new AppError('OUT_OF_SCOPE', '提案包含未授权的文档。')
       }
-      if (
-        context.scope === 'selection' &&
-        (operation.kind === 'create_document' ||
-          operation.kind === 'delete_document' ||
-          !('guard' in operation) ||
-          operation.guard.documentId !== context.activeDocumentId)
-      ) {
-        throw new AppError('OUT_OF_SCOPE', '选区范围的任务只能修改当前文档的选中内容。')
+      if ('guard' in operation && operation.guard.documentId !== context.activeDocumentId &&
+        this.deps.documents.getSession(operation.guard.documentId).workspaceId !== context.workspaceId) {
+        throw new AppError('OUT_OF_SCOPE', '提案包含任务工作区之外的文档。')
+      }
+      if (context.scope !== 'workspace' && (
+        !('guard' in operation) || operation.kind === 'delete_document' ||
+        operation.guard.documentId !== context.activeDocumentId
+      )) {
+        throw new AppError('OUT_OF_SCOPE', '新建、删除或修改其他文档需要将任务范围设为工作区。')
       }
     }
 
@@ -582,6 +590,18 @@ export class AgentTools {
       return operation
     })
 
+    if (context.scope === 'selection') {
+      const { selection, activeDocumentId } = context
+      if (!selection || !activeDocumentId) throw new AppError('OUT_OF_SCOPE', '请先选中需要修改的内容。')
+      const session = this.deps.documents.getSession(activeDocumentId)
+      for (const operation of rewritten) {
+        const { edits } = planOperation(operation, session)
+        if (edits.some((edit) => edit.from < selection.from || edit.to > selection.to)) {
+          throw new AppError('OUT_OF_SCOPE', '修改超出了任务的原始选区。')
+        }
+      }
+    }
+
     const changeSet = await this.deps.changes.createProposalFromModel(context.taskId, {
       summary: raw.summary,
       operations: rewritten,
@@ -594,11 +614,11 @@ export class AgentTools {
       summary: changeSet.summary,
       proposalId: changeSet.changeSetId,
       result: {
-        status: 'pending_review',
+        status: 'proposal_submitted',
         changeSetId: changeSet.changeSetId,
         summary: changeSet.summary,
         operationCount: changeSet.operations.length,
-        note: '提案已提交给用户审阅，不要重复提交相同修改。'
+        note: '提案已提交，应用会按用户设置处理审批，不要重复提交相同修改。'
       }
     }
   }

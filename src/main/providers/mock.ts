@@ -57,7 +57,7 @@ function findToolResult(messages: ProviderMessage[], toolName: string): Record<s
 }
 
 function assistantRounds(messages: ProviderMessage[]): number {
-  return messages.filter((message) => message.role === 'assistant').length
+  return messages.filter((message) => message.role === 'assistant' && message.toolCalls?.length).length
 }
 
 /** 为没有远程模型配置的演示与测试提供确定性的模型事件。 */
@@ -123,22 +123,12 @@ export class MockAdapter implements ProviderAdapter {
     const workspaceId = typeof files?.workspaceId === 'string' ? files.workspaceId : null
 
     if (rounds === 1) {
-      if (wantsAnswerOnly || !documentId) {
-        const title = typeof active?.title === 'string' ? active.title : '当前文档'
-        const headings = outline
-          .slice(0, 6)
-          .map((node) => `${'#'.repeat(Number(node.level) || 1)} ${String(node.title ?? '')}`)
-          .join('、')
-        yield* this.streamText(
-          `（演示 Provider）已读取《${title}》，共 ${outline.length} 个标题${headings ? `：${headings}` : ''}。这是本地演示回复，不调用真实模型；配置模型服务后可获得真实写作建议。`,
-          signal
-        )
-        yield { type: 'completed', finishReason: 'stop' }
-        return
-      }
-
       if (wantsCreate && workspaceId) {
-        const fileName = `新建文稿-${new Date().toISOString().slice(0, 10)}.md`
+        const requestedName = /(?:^|[\s`"'“”])([^\s`"'“”]+\.md)(?=$|[\s`"'“”])/i.exec(prompt)?.[1]
+        const fileName = requestedName ?? `新建文稿-${new Date().toISOString().slice(0, 10)}.md`
+        const content = /空文件|空白文[件档稿]/.test(prompt)
+          ? ''
+          : `# ${fileName.replace(/\.md$/, '')}\n\n这是由文档助手创建的草稿，可直接继续编辑。\n`
         yield {
           type: 'tool_call',
           call: {
@@ -151,7 +141,7 @@ export class MockAdapter implements ProviderAdapter {
                   kind: 'create_document',
                   workspaceId,
                   relativePath: fileName,
-                  content: `# ${fileName.replace(/\.md$/, '')}\n\n这是由文档助手创建的草稿，可直接继续编辑。\n`,
+                  content,
                   ifExists: 'fail'
                 }
               ]
@@ -159,6 +149,20 @@ export class MockAdapter implements ProviderAdapter {
           }
         }
         yield { type: 'completed', finishReason: 'tool_calls' }
+        return
+      }
+
+      if (wantsAnswerOnly || !documentId) {
+        const title = typeof active?.title === 'string' ? active.title : '当前文档'
+        const headings = outline
+          .slice(0, 6)
+          .map((node) => `${'#'.repeat(Number(node.level) || 1)} ${String(node.title ?? '')}`)
+          .join('、')
+        yield* this.streamText(
+          `（演示 Provider）已读取《${title}》，共 ${outline.length} 个标题${headings ? `：${headings}` : ''}。这是本地演示回复，不调用真实模型；配置模型服务后可获得真实写作建议。`,
+          signal
+        )
+        yield { type: 'completed', finishReason: 'stop' }
         return
       }
 
@@ -220,7 +224,11 @@ export class MockAdapter implements ProviderAdapter {
       return
     }
 
-    yield* this.streamText('修改建议已生成，请在审阅面板中确认后应用。', signal)
+    const proposal = findToolResult(request.messages, 'propose_changes')
+    yield* this.streamText(
+      typeof proposal?.error === 'string' ? proposal.error : '当前任务未应用文档修改。',
+      signal
+    )
     yield { type: 'completed', finishReason: 'stop' }
   }
 

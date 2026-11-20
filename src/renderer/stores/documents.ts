@@ -131,6 +131,26 @@ export const useDocumentsStore = defineStore('documents', () => {
     useUiStore().setLocked(false)
   }
 
+  async function moveTab(sourceId: string, targetId: string, after: boolean): Promise<void> {
+    if (sourceId === targetId) return
+    const ids = tabs.value.map((tab) => tab.snapshot.documentId)
+    const from = ids.indexOf(sourceId)
+    const target = ids.indexOf(targetId)
+    if (from < 0 || target < 0) return
+    const insertion = target + Number(after)
+    const to = insertion > from ? insertion - 1 : insertion
+    if (from === to) return
+    const ordered = [...tabs.value]
+    const [tab] = ordered.splice(from, 1)
+    ordered.splice(to, 0, tab)
+    tabs.value = ordered
+    try {
+      await window.api.documents.reorderOpen(ordered.map((item) => item.snapshot.documentId))
+    } catch (error) {
+      useUiStore().toast((error as Error).message || '无法保存标签顺序', 'error')
+    }
+  }
+
   function setActive(documentId: string): void {
     if (!tabs.value.some((tab) => tab.snapshot.documentId === documentId)) return
     if (activeId.value === documentId) return
@@ -451,6 +471,7 @@ export const useDocumentsStore = defineStore('documents', () => {
     newUntitled,
     createInWorkspace,
     setActive,
+    moveTab,
     onEditorText,
     flush,
     flushAll,

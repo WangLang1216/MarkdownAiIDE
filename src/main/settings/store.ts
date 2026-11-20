@@ -16,7 +16,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   typography: {
     fontFamily: 'sans',
     fontSize: 14,
-    lineHeight: 1.95,
+    lineHeight: 2.05,
     maxWidth: 740,
     docThemeId: 'default'
   },
@@ -29,7 +29,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     spellcheck: false
   },
   agent: {
-    autoApplyCurrentDocument: false,
+    approvalMode: 'ask',
     maxRounds: 12,
     temperature: 0.3
   },
@@ -83,6 +83,7 @@ function sanitizeAssetsFolder(value: unknown): string {
 export class SettingsStore {
   private settings: AppSettings = structuredClone(DEFAULT_SETTINGS)
   private loaded = false
+  private pendingWrite: Promise<void> = Promise.resolve()
 
   /** 从磁盘读取配置，与默认设置合并得到运行时值。 */
   async load(): Promise<AppSettings> {
@@ -169,11 +170,11 @@ export class SettingsStore {
           : 'light'
       },
       typography: {
-        fontFamily: ['sans', 'serif', 'mono'].includes(settings.typography.fontFamily)
+        fontFamily: ['sans', 'serif', 'mono', 'yahei', 'simsun', 'kaiti', 'simhei', 'fangsong'].includes(settings.typography.fontFamily)
           ? settings.typography.fontFamily
           : 'sans',
         fontSize: clamp(settings.typography.fontSize, 12, 22, 14),
-        lineHeight: clamp(settings.typography.lineHeight, 1.4, 2.4, 1.95),
+        lineHeight: clamp(settings.typography.lineHeight, 1.4, 2.4, 2.05),
         maxWidth: clamp(settings.typography.maxWidth, 560, 1100, 740),
         docThemeId: settings.typography.docThemeId || 'default'
       },
@@ -186,7 +187,10 @@ export class SettingsStore {
         spellcheck: Boolean(settings.editor.spellcheck)
       },
       agent: {
-        autoApplyCurrentDocument: Boolean(settings.agent.autoApplyCurrentDocument),
+        approvalMode:
+          settings.agent.approvalMode === 'assisted' || settings.agent.approvalMode === 'full_access'
+            ? settings.agent.approvalMode
+            : 'ask',
         maxRounds: clamp(settings.agent.maxRounds, 2, 24, 12),
         temperature: clamp(settings.agent.temperature, 0, 1.5, 0.3)
       },
@@ -234,14 +238,21 @@ export class SettingsStore {
     }
   }
 
-  private migrate(parsed: Partial<AppSettings>): AppSettings {
+  private migrate(parsed: Omit<Partial<AppSettings>, 'agent'> & {
+    agent?: Partial<AppSettings['agent']> & { autoApplyCurrentDocument?: boolean }
+  }): AppSettings {
     const merged: AppSettings = {
       ...structuredClone(DEFAULT_SETTINGS),
       ...parsed,
       appearance: { ...DEFAULT_SETTINGS.appearance, ...parsed.appearance },
       typography: { ...DEFAULT_SETTINGS.typography, ...parsed.typography },
       editor: { ...DEFAULT_SETTINGS.editor, ...parsed.editor },
-      agent: { ...DEFAULT_SETTINGS.agent, ...parsed.agent },
+      agent: {
+        ...DEFAULT_SETTINGS.agent,
+        ...parsed.agent,
+        approvalMode: parsed.agent?.approvalMode ??
+          (parsed.agent?.autoApplyCurrentDocument === true ? 'assisted' : DEFAULT_SETTINGS.agent.approvalMode)
+      },
       prediction: { ...DEFAULT_SETTINGS.prediction, ...parsed.prediction },
       export: { ...DEFAULT_SETTINGS.export, ...parsed.export },
       storage: { ...DEFAULT_SETTINGS.storage, ...parsed.storage },
@@ -251,13 +262,15 @@ export class SettingsStore {
   }
 
   /** 将当前设置序列化并写入应用设置文件。 */
-  async persist(): Promise<void> {
-    try {
-      await atomicWriteFile(appPaths().settingsFile, JSON.stringify(this.settings, null, 2))
-    } catch (error) {
-      logger.error('settings', '设置保存失败', {
-        message: error instanceof Error ? error.message : String(error)
+  persist(): Promise<void> {
+    const snapshot = JSON.stringify(this.settings, null, 2)
+    this.pendingWrite = this.pendingWrite
+      .then(() => atomicWriteFile(appPaths().settingsFile, snapshot))
+      .catch((error) => {
+        logger.error('settings', '设置保存失败', {
+          message: error instanceof Error ? error.message : String(error)
+        })
       })
-    }
+    return this.pendingWrite
   }
 }

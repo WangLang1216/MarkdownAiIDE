@@ -94,9 +94,14 @@ export async function insertImageElement(): Promise<void> {
     return
   }
   try {
+    const editor = editorApi.current
+    const selection = editor?.getSelection()
+    const selected = selection ? editor?.getText().slice(selection.from, selection.to).trim() : ''
     const picked = await window.api.documents.pickImage(tab.snapshot.documentId)
     if (!picked) return
-    editorApi.current?.insertText(`\n![${picked.alt}](./${picked.relativePath})\n`)
+    if (documents.activeId !== tab.snapshot.documentId || editor !== editorApi.current) return
+    const alt = selected ? selected.replace(/\s+/g, ' ').replace(/[\\[\]]/g, (character) => '\\' + character) : picked.alt
+    editor?.insertText(`\n![${alt}](./${picked.relativePath})\n`)
     await useWorkspaceStore().load()
     ui.toast('图片已复制到资源目录并插入文稿', 'success')
   } catch (error) {

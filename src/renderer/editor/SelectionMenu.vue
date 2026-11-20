@@ -10,6 +10,7 @@ type MenuAction =
   | 'italic'
   | 'underline'
   | 'strike'
+  | 'mark'
   | 'code'
   | 'link'
   | 'clear'
@@ -33,6 +34,7 @@ const groups: MenuItem[][] = [
     { id: 'bold', label: '加粗', shortcut: 'Ctrl B', needSelection: true },
     { id: 'italic', label: '斜体', shortcut: 'Ctrl I', needSelection: true },
     { id: 'underline', label: '下划线', shortcut: 'Ctrl U', needSelection: true },
+    { id: 'mark', label: '高亮', needSelection: true },
     { id: 'strike', label: '删除线', needSelection: true },
     { id: 'code', label: '行内代码', needSelection: true }
   ],

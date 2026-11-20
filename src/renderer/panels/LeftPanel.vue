@@ -6,7 +6,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useUiStore } from '../stores/ui'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useDocumentsStore } from '../stores/documents'
-import { ELEMENT_SNIPPETS, EXTENDED_SNIPPETS, MODULE_SNIPPETS } from '../editor/snippets'
+import { ELEMENT_SNIPPETS, EXTENDED_SNIPPETS, MODULE_SNIPPETS, importedTemplates, importContentTemplate } from '../editor/snippets'
 import { editorApi } from '../lib/editorApi'
 import { insertImageElement } from '../lib/actions'
 import Icon from '../components/Icon.vue'
@@ -18,6 +18,24 @@ const documents = useDocumentsStore()
 /** 专注模式只保留元素区，隐藏元素/文件切换 */
 const props = defineProps<{ focus?: boolean }>()
 const activeTab = computed(() => (props.focus ? 'elements' : ui.leftTab))
+
+const templateInput = ref<HTMLInputElement | null>(null)
+
+async function importTemplates(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  for (const file of Array.from(input.files ?? [])) {
+    try {
+      if (file.size > 512 * 1024) throw new Error('模板大小上限为 512 KB。')
+      const text = await file.text()
+      if (!text.trim()) throw new Error('模板为空。')
+      importContentTemplate(file.name.replace(/\.(md|markdown|txt)$/i, ''), text)
+      if (moduleCollapsed.value) toggleModules()
+    } catch (error) {
+      ui.toast((error as Error).message || '模板导入失败', 'error')
+    }
+  }
+  input.value = ''
+}
 
 const elementQuery = ref('')
 const fileQuery = ref('')
@@ -87,6 +105,7 @@ const orderedModules = computed(() =>
   moduleOrder.value
     .map((id) => MODULE_SNIPPETS.find((item) => item.id === id))
     .filter((item): item is (typeof MODULE_SNIPPETS)[number] => Boolean(item))
+    .concat(importedTemplates.value)
 )
 
 const filteredElements = computed(() =>
@@ -465,7 +484,8 @@ async function switchWorkspace(): Promise<void> {
           <Icon :name="moduleCollapsed ? 'right' : 'down'" :size="10" />
           内容模块
         </button>
-        <span>常用结构</span>
+        <button class="textbtn" @click="templateInput?.click()">导入模板</button>
+        <input ref="templateInput" type="file" accept=".md,.markdown,.txt" multiple hidden @change="importTemplates" />
       </div>
       <div v-show="!moduleCollapsed || elementQuery" id="module-list" class="module-list">
         <div

@@ -3,7 +3,7 @@
  * 界面只消费归一化后的事件，不直接解析模型输出。
  */
 
-import { computed, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import type {
   Attachment,
@@ -14,7 +14,9 @@ import type {
   SourceAsset,
   SourcePreviewChunk,
   StyleProfile,
-  TaskEvent
+  StartTaskInput,
+  TaskEvent,
+  TaskSnapshot
 } from '@shared/types'
 import { useDocumentsStore } from './documents'
 import { useSettingsStore } from './settings'
@@ -50,6 +52,7 @@ export interface TaskView {
   phaseLabel: string
   /** 累计任务流式输出的文本，供 AI 面板展示。 */
   text: string
+  stepsText: string
   /** 面板按调用标识更新的工具执行步骤。 */
   tools: TaskTool[]
   /** 任务需向用户确认时提供的澄清请求。 */
@@ -69,6 +72,7 @@ const emptyTask = (): TaskView => ({
   status: 'idle',
   phaseLabel: '',
   text: '',
+  stepsText: '',
   tools: [],
   clarification: null,
   error: null,
@@ -81,16 +85,80 @@ export const useAgentStore = defineStore('agent', () => {
   const providers = ref<ProviderConfig[]>([])
   const selectedProviderId = ref<string>(localStorage.getItem('moye.provider') ?? '')
   const attachments = ref<Attachment[]>([])
-  const selectedAttachmentIds = ref<string[]>([])
+  const documents = useDocumentsStore()
+  const documentId = computed(() => documents.activeId)
+  const tabKey = (id: string | null): string => id ?? 'workspace'
+  const currentKey = computed(() => tabKey(documentId.value))
+  const drafts = reactive<Record<string, string>>({})
+  const attachmentSelections = reactive<Record<string, string[]>>({})
+  const sourceSelections = reactive<Record<string, string[]>>({})
+  const selectedAttachmentIds = computed({
+    get: () => attachmentSelections[currentKey.value] ?? [],
+    set: (ids: string[]) => { attachmentSelections[currentKey.value] = ids }
+  })
   const sources = ref<SourceAsset[]>([])
-  const selectedSourceIds = ref<string[]>([])
+  const selectedSourceIds = computed({
+    get: () => sourceSelections[currentKey.value] ?? [],
+    set: (ids: string[]) => { sourceSelections[currentKey.value] = ids }
+  })
   const styles = ref<StyleProfile[]>([])
   const selectedStyleId = ref<string>('')
-  const task = ref<TaskView>(emptyTask())
+  const tasks = reactive<Record<string, TaskView>>({})
+  const taskKeys = new Map<string, string>()
+  const task = computed(() => tasks[currentKey.value] ?? emptyTask())
+  const history = ref<TaskSnapshot[]>([])
+  const historyHasMore = ref(false)
+  const historyLoading = ref(false)
+  let historyVersion = 0
+
+  async function loadHistory(append = false): Promise<void> {
+    if (append && historyLoading.value) return
+    const id = documentId.value
+    const version = ++historyVersion
+    const offset = append ? history.value.length : 0
+    historyLoading.value = true
+    if (!append) {
+      history.value = []
+      historyHasMore.value = false
+    }
+    try {
+      const page = await window.api.agent.history(id, offset)
+      if (version !== historyVersion) return
+      history.value = append ? [...history.value, ...page] : page
+      historyHasMore.value = page.length === 20
+    } catch (error) {
+      if (version === historyVersion) useUiStore().toast((error as Error).message || '无法读取对话历史', 'error')
+    } finally {
+      if (version === historyVersion) historyLoading.value = false
+    }
+  }
+
+  async function deleteHistory(ids: string[] | null): Promise<void> {
+    const id = documentId.value
+    const key = currentKey.value
+    try {
+      await window.api.agent.deleteHistory(id, ids)
+      const current = tasks[key]
+      if (current?.taskId && (!ids || ids.includes(current.taskId)) &&
+          !['running', 'waiting_input'].includes(current.status)) {
+        taskKeys.delete(current.taskId)
+        delete tasks[key]
+      }
+      if (id === documentId.value) await loadHistory()
+    } catch (error) {
+      useUiStore().toast((error as Error).message || '无法删除对话', 'error')
+    }
+  }
+
+  watch(() => [documentId.value, documents.activeTab?.snapshot.title, documents.activeTab?.snapshot.existsOnDisk], () => { void loadHistory() }, { immediate: true })
   const proposal = ref<ReviewData | null>(null)
   const proposalLoading = ref(false)
-  const prompt = ref('')
-  const scope = ref<'selection' | 'document' | 'workspace'>('document')
+  let reviewDocumentId: string | null = null
+  const prompt = computed({
+    get: () => drafts[currentKey.value] ?? '',
+    set: (value: string) => { drafts[currentKey.value] = value }
+  })
+  const scope = ref<StartTaskInput['scope']>('auto')
   const mode = ref<'edit' | 'ask'>('edit')
   const predicting = ref(false)
   /** 自动预测失败时的最近一次提示时间，避免频繁打扰 */
@@ -166,12 +234,25 @@ export const useAgentStore = defineStore('agent', () => {
       ui.modal = 'providers'
       return
     }
-    if (task.value.status === 'running') return
-    if (doc) await documents.flush(doc.snapshot.documentId)
+    if (isRunning.value) return
+    const id = doc?.snapshot.documentId ?? null
+    const key = currentKey.value
+    const providerId = selectedProvider.value.providerId
+    const selectedScope = scope.value
+    const selectedMode = mode.value
+    const attachmentIds = [...selectedAttachmentIds.value]
+    const sourceIds = [...selectedSourceIds.value]
+    const styleProfileId = selectedStyleId.value
     const selection = editorApi.current?.getSelection()
-    const useSelection = scope.value === 'selection' && selection && selection.from !== selection.to && doc
+    const useSelection = selectedScope === 'selection' && selection && selection.from !== selection.to && doc
+    if (selectedScope === 'selection' && !useSelection) {
+      ui.toast('请先选中需要修改的内容', 'warning')
+      return
+    }
+    const previous = tasks[key]
+    if (previous?.taskId) taskKeys.delete(previous.taskId)
     try {
-      task.value = {
+      tasks[key] = {
         ...emptyTask(),
         status: 'running',
         documentTitle: doc?.snapshot.title ?? '工作区',
@@ -179,23 +260,28 @@ export const useAgentStore = defineStore('agent', () => {
         phaseLabel: '准备任务',
         text: ''
       }
-      proposal.value = null
+      drafts[key] = ''
+      if (doc) await documents.flush(doc.snapshot.documentId)
       const result = await window.api.agent.start({
-        documentId: doc?.snapshot.documentId ?? null,
+        documentId: id,
         prompt: text,
-        scope: useSelection ? 'selection' : scope.value,
+        scope: selectedScope,
         ...(useSelection ? { selection: { from: selection!.from, to: selection!.to } } : {}),
-        providerId: selectedProvider.value.providerId,
-        attachmentIds: [...selectedAttachmentIds.value],
-        sourceIds: [...selectedSourceIds.value],
-        mode: mode.value,
-        ...(selectedStyleId.value ? { styleProfileId: selectedStyleId.value } : {})
+        providerId,
+        attachmentIds,
+        sourceIds,
+        mode: selectedMode,
+        ...(styleProfileId ? { styleProfileId } : {})
       })
-      task.value.taskId = result.taskId
-      prompt.value = ''
+      const current = tasks[key]
+      if (current?.status === 'running' && !current.taskId) {
+        current.taskId = result.taskId
+        taskKeys.set(result.taskId, key)
+      }
     } catch (error) {
-      task.value.status = 'failed'
-      task.value.error = {
+      drafts[key] = text
+      tasks[key].status = 'failed'
+      tasks[key].error = {
         code: (error as { code?: string }).code ?? 'UNKNOWN',
         message: (error as Error).message,
         retryable: Boolean((error as { retryable?: boolean }).retryable)
@@ -213,37 +299,50 @@ export const useAgentStore = defineStore('agent', () => {
   async function answer(value: string, option?: string): Promise<void> {
     const taskId = task.value.taskId
     if (!taskId) return
-    await window.api.agent.answer({ taskId, answer: value, selectedOption: option })
-    task.value.clarification = null
-    task.value.status = 'running'
-    task.value.phaseLabel = '继续处理'
+    const current = task.value
+    try {
+      await window.api.agent.answer({ taskId, answer: value, selectedOption: option })
+      if (current.status === 'waiting_input') {
+        current.clarification = null
+        current.status = 'running'
+        current.phaseLabel = '继续处理'
+      }
+    } catch (error) {
+      useUiStore().toast((error as Error).message || '无法发送回答', 'error')
+    }
   }
 
   /** 处理主进程推送的任务事件（由 App 统一订阅） */
   /** 将任务事件归并到当前任务视图，包括文本增量、工具状态及提案结果。 */
   function handleEvent(event: TaskEvent): void {
     if (event.type === 'started') {
-      if (task.value.taskId && task.value.taskId !== event.task.taskId && isRunning.value) return
-      task.value.taskId = event.task.taskId
-      task.value.documentTitle = event.task.documentTitle
-      task.value.prompt = event.task.prompt
-      task.value.status = 'running'
+      const key = tabKey(event.task.documentId)
+      const current = tasks[key]
+      if (!current) return
+      current.taskId = event.taskId
+      taskKeys.set(event.taskId, key)
       return
     }
-    if (task.value.taskId && event.taskId !== task.value.taskId) return
+    const key = taskKeys.get(event.taskId)
+    const current = key ? tasks[key] : undefined
+    if (!current) return
     switch (event.type) {
       case 'phase':
-        task.value.phaseLabel = event.label
+        current.phaseLabel = event.label
         break
       case 'text_delta':
-        task.value.text += event.text
+        current.text += event.text
+        break
+      case 'step_text':
+        current.stepsText += (current.stepsText ? '\n\n' : '') + event.text
+        current.text = ''
         break
       case 'message':
-        task.value.text += `${task.value.text ? '\n' : ''}${event.text}`
+        current.text += `${current.text ? '\n' : ''}${event.text}`
         break
       case 'tool_started':
-        task.value.tools = [
-          ...task.value.tools,
+        current.tools = [
+          ...current.tools,
           {
             callId: event.callId,
             name: event.name,
@@ -254,53 +353,64 @@ export const useAgentStore = defineStore('agent', () => {
         ]
         break
       case 'tool_finished':
-        task.value.tools = task.value.tools.map((tool) =>
+        current.tools = current.tools.map((tool) =>
           tool.callId === event.callId
             ? { ...tool, status: event.ok ? 'done' : 'failed', summary: event.summary }
             : tool
         )
         break
       case 'clarification':
-        task.value.clarification = {
+        current.clarification = {
           question: event.question,
           options: event.options,
           allowFreeText: event.allowFreeText
         }
-        task.value.status = 'waiting_input'
+        current.status = 'waiting_input'
         break
       case 'proposal_ready':
-        task.value.status = 'reviewing'
-        task.value.phaseLabel = '等待审阅'
-        task.value.proposalId = event.changeSetId
+        current.status = 'reviewing'
+        current.clarification = null
+        current.phaseLabel = '等待审阅'
+        current.proposalId = event.changeSetId
         break
       case 'applied':
-        task.value.status = event.status === 'applied' ? 'applied' : 'reviewing'
-        task.value.applied = {
+        current.status = event.status === 'applied' || event.status === 'partially_applied' ? 'applied' : 'failed'
+        current.phaseLabel =
+          event.status === 'applied' ? '已应用' : event.status === 'partially_applied' ? '部分应用' : '未能应用'
+        current.applied = {
           transactionId: event.transactionId,
           message: event.summary,
           status: event.status
         }
         break
       case 'failed':
-        task.value.status = 'failed'
-        task.value.error = { code: event.code, message: event.message, retryable: event.retryable }
+        current.status = 'failed'
+        current.clarification = null
+        current.error = { code: event.code, message: event.message, retryable: event.retryable }
         break
       case 'cancelled':
-        task.value.status = 'cancelled'
-        task.value.phaseLabel = '已停止'
+        current.status = 'cancelled'
+        current.clarification = null
+        current.phaseLabel = '已停止'
         break
       case 'completed':
-        task.value.status = 'completed'
-        task.value.phaseLabel = '已完成'
-        if (!task.value.text.trim()) task.value.text = event.text
+        current.status = 'completed'
+        current.clarification = null
+        current.phaseLabel = '已完成'
+        current.text = event.text
         break
       default:
         break
+    }
+    if (key === currentKey.value && ['completed', 'applied', 'proposal_ready', 'cancelled', 'failed'].includes(event.type)) {
+      void loadHistory()
     }
   }
 
   /** 获取可审阅差异，将指定提案交给审阅界面展示。 */
   async function openReview(changeSetId: string): Promise<void> {
+    if (proposalLoading.value) return
+    reviewDocumentId = documentId.value
     proposalLoading.value = true
     useUiStore().reviewOpen = true
     try {
@@ -315,40 +425,57 @@ export const useAgentStore = defineStore('agent', () => {
 
   /** 提交当前审阅的提案及摘要，并根据执行结果更新审阅窗口。 */
   async function acceptProposal(): Promise<void> {
-    if (!proposal.value) return
+    const review = proposal.value
+    if (!review || proposalLoading.value) return
+    const id = reviewDocumentId
     const ui = useUiStore()
+    proposalLoading.value = true
     try {
-      const result = await window.api.changes.accept(
-        proposal.value.changeSet.changeSetId,
-        proposal.value.changeSet.proposalDigest
-      )
-      task.value.applied = {
-        transactionId: result.transactionId,
-        message: result.message,
-        status: result.status
+      const result = await window.api.changes.accept(review.changeSet.changeSetId, review.changeSet.proposalDigest, id)
+      const current = tasks[tabKey(id)]
+      if (current?.proposalId === review.changeSet.changeSetId) {
+        current.applied = { transactionId: result.transactionId, message: result.message, status: result.status }
+        current.status = result.status === 'applied' ? 'applied' : 'reviewing'
+        current.phaseLabel = result.status === 'applied' ? '已应用' : '等待审阅'
       }
-      task.value.status =
-        result.status === 'applied' ? 'applied' : result.status === 'failed' ? 'failed' : 'reviewing'
-      ui.reviewOpen = false
       ui.toast(result.message, result.status === 'applied' ? 'success' : 'warning', 4200)
-      if (result.status !== 'applied') {
-        proposal.value = await window.api.changes
-          .review(proposal.value.changeSet.changeSetId)
-          .catch(() => proposal.value)
-        ui.reviewOpen = true
+      if (result.status === 'applied') {
+        ui.reviewOpen = false
+      } else {
+        proposal.value = await window.api.changes.review(review.changeSet.changeSetId).catch(() => review)
       }
+      if (id === documentId.value) await loadHistory()
     } catch (error) {
       ui.toast((error as Error).message || '应用失败', 'error')
+    } finally {
+      proposalLoading.value = false
     }
   }
 
-  async function rejectProposal(): Promise<void> {
-    if (!proposal.value) return
-    await window.api.changes.reject(proposal.value.changeSet.changeSetId)
-    proposal.value = null
-    useUiStore().reviewOpen = false
-    task.value.status = 'cancelled'
-    task.value.phaseLabel = '已放弃'
+  async function rejectProposal(changeSetId = proposal.value?.changeSet.changeSetId): Promise<void> {
+    if (!changeSetId || proposalLoading.value) return
+    const fromDialog = changeSetId === proposal.value?.changeSet.changeSetId && useUiStore().reviewOpen
+    const id = fromDialog ? reviewDocumentId : documentId.value
+    const ui = useUiStore()
+    proposalLoading.value = true
+    try {
+      await window.api.changes.reject(changeSetId, id)
+      if (fromDialog) {
+        proposal.value = null
+        ui.reviewOpen = false
+      }
+      const current = tasks[tabKey(id)]
+      if (current?.proposalId === changeSetId) {
+        current.status = 'cancelled'
+        current.phaseLabel = '已放弃'
+      }
+      if (id === documentId.value) await loadHistory()
+      ui.toast('已放弃本次建议', 'info')
+    } catch (error) {
+      ui.toast((error as Error).message || '放弃建议失败', 'error')
+    } finally {
+      proposalLoading.value = false
+    }
   }
 
   async function restoreTransaction(transactionId: string): Promise<void> {
@@ -364,18 +491,17 @@ export const useAgentStore = defineStore('agent', () => {
   /* --------------------------- 附件与参考材料 --------------------------- */
 
   async function addAttachmentDialog(): Promise<void> {
+    const key = currentKey.value
     const added = await window.api.attachments.addFromDialog()
     if (!added.length) return
     attachments.value = [...added, ...attachments.value]
-    selectedAttachmentIds.value = [
-      ...new Set([...selectedAttachmentIds.value, ...added.map((item) => item.attachmentId)])
-    ]
+    attachmentSelections[key] = [...new Set([...(attachmentSelections[key] ?? []), ...added.map((item) => item.attachmentId)])]
   }
 
-  async function addAttachmentBytes(name: string, mime: string, bytes: ArrayBuffer): Promise<void> {
+  async function addAttachmentBytes(name: string, mime: string, bytes: ArrayBuffer, key = currentKey.value): Promise<void> {
     const added = await window.api.attachments.addFromBytes(name, mime, bytes)
     attachments.value = [added, ...attachments.value]
-    selectedAttachmentIds.value = [...new Set([...selectedAttachmentIds.value, added.attachmentId])]
+    attachmentSelections[key] = [...new Set([...(attachmentSelections[key] ?? []), added.attachmentId])]
   }
 
   function toggleAttachment(attachmentId: string): void {
@@ -385,19 +511,19 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   async function addReferenceFile(): Promise<void> {
+    const key = currentKey.value
     const added = await window.api.references.addFileDialog()
     if (!added.length) return
     sources.value = [...added, ...sources.value]
-    selectedSourceIds.value = [
-      ...new Set([...selectedSourceIds.value, ...added.map((item) => item.sourceId)])
-    ]
+    sourceSelections[key] = [...new Set([...(sourceSelections[key] ?? []), ...added.map((item) => item.sourceId)])]
   }
 
   /** 拖入/粘贴的文件：主进程先落到参考目录再解析，不读取任意路径 */
-  async function addReferenceBytes(name: string, bytes: ArrayBuffer): Promise<void> {
+  async function addReferenceBytes(name: string, bytes: ArrayBuffer, key = currentKey.value): Promise<SourceAsset> {
     const added = await window.api.references.addFromBytes(name, bytes)
     sources.value = [added, ...sources.value]
-    selectedSourceIds.value = [...new Set([...selectedSourceIds.value, added.sourceId])]
+    sourceSelections[key] = [...new Set([...(sourceSelections[key] ?? []), added.sourceId])]
+    return added
   }
 
   async function addReferenceWeb(url: string): Promise<void> {
@@ -505,12 +631,6 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
-  function resetTask(): void {
-    task.value = emptyTask()
-    proposal.value = null
-    useUiStore().reviewOpen = false
-  }
-
   return {
     providers,
     selectedProviderId,
@@ -558,6 +678,11 @@ export const useAgentStore = defineStore('agent', () => {
     openSourcePreview,
     closeSourcePreview,
     requestPrediction,
-    resetTask
+    currentKey,
+    history,
+    historyHasMore,
+    historyLoading,
+    loadHistory,
+    deleteHistory
   }
 })

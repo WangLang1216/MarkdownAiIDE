@@ -24,7 +24,6 @@ const typography = computed(() => settings.settings.typography)
 const editorSettings = computed(() => settings.settings.editor)
 const prediction = computed(() => settings.settings.prediction)
 const exportSettings = computed(() => settings.settings.export)
-const agentSettings = computed(() => settings.settings.agent)
 const storageSettings = computed(() => settings.settings.storage)
 const behaviorSettings = computed(() => settings.settings.appBehavior)
 
@@ -77,10 +76,6 @@ async function patchPrediction(patch: Partial<typeof prediction.value>): Promise
 
 async function patchExport(patch: Partial<typeof exportSettings.value>): Promise<void> {
   await settings.update({ export: patch })
-}
-
-async function patchAgent(patch: Partial<typeof agentSettings.value>): Promise<void> {
-  await settings.update({ agent: patch })
 }
 
 async function patchStorage(patch: Partial<typeof storageSettings.value>): Promise<void> {
@@ -191,27 +186,18 @@ async function chooseCacheDir(): Promise<void> {
       <div class="settings-label">排版<span>实时渲染与预览同步生效</span></div>
       <div class="setting-grid">
         <div class="field">
-          <label>正文字体</label>
-          <div class="segmented">
-            <button
-              :class="{ active: typography.fontFamily === 'sans' }"
-              @click="patchTypography({ fontFamily: 'sans' })"
-            >
-              无衬线
-            </button>
-            <button
-              :class="{ active: typography.fontFamily === 'serif' }"
-              @click="patchTypography({ fontFamily: 'serif' })"
-            >
-              衬线
-            </button>
-            <button
-              :class="{ active: typography.fontFamily === 'mono' }"
-              @click="patchTypography({ fontFamily: 'mono' })"
-            >
-              等宽
-            </button>
-          </div>
+          <label for="body-font">正文字体</label>
+          <select id="body-font" :value="typography.fontFamily"
+            @change="patchTypography({ fontFamily: ($event.target as HTMLSelectElement).value as typeof typography.fontFamily })">
+            <option value="sans">默认无衬线</option>
+            <option value="serif">默认衬线</option>
+            <option value="mono">等宽</option>
+            <option value="yahei">微软雅黑</option>
+            <option value="simsun">宋体</option>
+            <option value="kaiti">楷体</option>
+            <option value="simhei">黑体</option>
+            <option value="fangsong">仿宋</option>
+          </select>
         </div>
         <div class="field">
           <label>字号 {{ typography.fontSize }}px</label>
@@ -226,6 +212,12 @@ async function chooseCacheDir(): Promise<void> {
         </div>
         <div class="field">
           <label>行距 {{ typography.lineHeight.toFixed(2) }}</label>
+          <div class="segmented">
+            <button v-for="preset in [{ label: '紧凑', value: 1.7 }, { label: '默认', value: 2.05 }, { label: '宽松', value: 2.35 }]"
+              :key="preset.value" :class="{ active: typography.lineHeight === preset.value }"
+              :aria-pressed="typography.lineHeight === preset.value"
+              @click="patchTypography({ lineHeight: preset.value })">{{ preset.label }}</button>
+          </div>
           <input
             type="range"
             min="1.4"
@@ -301,14 +293,6 @@ async function chooseCacheDir(): Promise<void> {
             @change="patchPrediction({ auto: ($event.target as HTMLInputElement).checked })"
           />
           自动预测（默认开启，停顿 {{ prediction.debounceMs }}ms，每分钟最多 {{ prediction.maxPerMinute }} 次）
-        </label>
-        <label class="checkbox">
-          <input
-            type="checkbox"
-            :checked="agentSettings.autoApplyCurrentDocument"
-            @change="patchAgent({ autoApplyCurrentDocument: ($event.target as HTMLInputElement).checked })"
-          />
-          当前文档低风险修改自动应用（无待核对数据时）
         </label>
       </div>
 

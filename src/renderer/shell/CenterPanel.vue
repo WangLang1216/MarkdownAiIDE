@@ -39,12 +39,44 @@ function toggleLock(): void {
 
 const tabsRef = ref<HTMLElement | null>(null)
 const tabDropActive = ref(false)
+const draggedTab = ref<string | null>(null)
+const tabInsertion = ref<{ id: string; after: boolean } | null>(null)
+const TAB_DRAG_TYPE = 'application/x-moye-document-tab'
 const tabsOverflow = ref(false)
 const canScrollLeft = ref(false)
 const canScrollRight = ref(false)
 let tabsObserver: ResizeObserver | null = null
 const DROP_EXTENSIONS = /\.(md|markdown|mdx|txt)$/i
 let tabDragDepth = 0
+
+function beginTabDrag(event: DragEvent, documentId: string): void {
+  if (!event.dataTransfer || documents.tabs.length < 2) {
+    event.preventDefault()
+    return
+  }
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData(TAB_DRAG_TYPE, documentId)
+  draggedTab.value = documentId
+}
+
+function endTabDrag(): void {
+  draggedTab.value = null
+  tabInsertion.value = null
+}
+
+function isTabDrag(event: DragEvent): boolean {
+  return Boolean(draggedTab.value && event.dataTransfer?.types.includes(TAB_DRAG_TYPE))
+}
+
+function findTabInsertion(x: number): { id: string; after: boolean } | null {
+  const tabs = tabsRef.value?.querySelectorAll<HTMLElement>('[data-tab-id]')
+  if (!tabs?.length) return null
+  for (const tab of tabs) {
+    const bounds = tab.getBoundingClientRect()
+    if (x < bounds.left + bounds.width / 2) return { id: tab.dataset.tabId!, after: false }
+  }
+  return { id: tabs[tabs.length - 1].dataset.tabId!, after: true }
+}
 
 function hasFiles(event: DragEvent): boolean {
   return Boolean(event.dataTransfer?.types.includes('Files'))
@@ -57,18 +89,43 @@ function onTabDragEnter(event: DragEvent): void {
 }
 
 function onTabDragOver(event: DragEvent): void {
+  if (isTabDrag(event) && event.dataTransfer) {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    const strip = tabsRef.value
+    if (strip && strip.scrollWidth > strip.clientWidth) {
+      const bounds = strip.getBoundingClientRect()
+      if (event.clientX < bounds.left + 22) strip.scrollLeft -= 18
+      else if (event.clientX > bounds.right - 22) strip.scrollLeft += 18
+    }
+    tabInsertion.value = findTabInsertion(event.clientX)
+    return
+  }
   if (!hasFiles(event)) return
   event.preventDefault()
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
 }
 
-function onTabDragLeave(): void {
+function onTabDragLeave(event: DragEvent): void {
+  if (isTabDrag(event)) {
+    if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) tabInsertion.value = null
+    return
+  }
+  if (!hasFiles(event)) return
   tabDragDepth = Math.max(0, tabDragDepth - 1)
   if (!tabDragDepth) tabDropActive.value = false
 }
 
 /** 拖入标签栏：逐个打开文稿，并以只读成稿状态展示，避免拖入即误改 */
 async function onTabDrop(event: DragEvent): Promise<void> {
+  if (isTabDrag(event)) {
+    const source = event.dataTransfer?.getData(TAB_DRAG_TYPE)
+    const target = findTabInsertion(event.clientX)
+    const isLocalSource = source && source === draggedTab.value
+    endTabDrag()
+    if (isLocalSource && target) await documents.moveTab(source, target.id, target.after)
+    return
+  }
   tabDragDepth = 0
   tabDropActive.value = false
   const files = Array.from(event.dataTransfer?.files ?? [])
@@ -255,7 +312,16 @@ async function resolve(choice: 'reload' | 'overwrite' | 'saveAs'): Promise<void>
             v-for="tab in documents.tabs"
             :key="tab.snapshot.documentId"
             class="doc-tab"
-            :class="{ active: tab.snapshot.documentId === documents.activeId }"
+            :class="{
+              active: tab.snapshot.documentId === documents.activeId,
+              'tab-dragging': draggedTab === tab.snapshot.documentId,
+              'tab-drop-before': draggedTab !== tab.snapshot.documentId && tabInsertion?.id === tab.snapshot.documentId && !tabInsertion.after,
+              'tab-drop-after': draggedTab !== tab.snapshot.documentId && tabInsertion?.id === tab.snapshot.documentId && tabInsertion.after
+            }"
+            :data-tab-id="tab.snapshot.documentId"
+            :draggable="documents.tabs.length > 1"
+            @dragstart="beginTabDrag($event, tab.snapshot.documentId)"
+            @dragend="endTabDrag"
             role="tab"
             tabindex="0"
             :aria-selected="tab.snapshot.documentId === documents.activeId"
@@ -453,6 +519,35 @@ async function resolve(choice: 'reload' | 'overwrite' | 'saveAs'): Promise<void>
   border: 1px solid #e2c3ba;
   border-radius: 4px;
   padding: 2px 6px;
+}
+
+.doc-tab[draggable='true'] {
+  position: relative;
+  cursor: grab;
+}
+
+.doc-tab.tab-dragging {
+  opacity: 0.5;
+}
+
+.doc-tab.tab-drop-before::before,
+.doc-tab.tab-drop-after::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.doc-tab.tab-drop-before::before {
+  left: 0;
+}
+
+.doc-tab.tab-drop-after::after {
+  right: 0;
 }
 
 .doc-tab .close {

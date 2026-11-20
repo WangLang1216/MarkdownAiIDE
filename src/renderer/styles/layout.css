@@ -1432,48 +1432,14 @@ body.split-resizing .cm-content {
   height: 24px;
 }
 
-.provider-control {
-  display: flex;
-  align-items: center;
-  position: relative;
-  gap: 5px;
-  padding: 3px 7px;
-  border-radius: 5px;
-  color: var(--soft);
-  font-size: 10px;
-}
-
-.provider-control:hover {
-  background: var(--side);
-}
-
-.provider-control select {
-  appearance: none;
-  background: none;
-  border: 0;
-  outline: none;
-  padding-right: 14px;
-  cursor: pointer;
-  font-size: 10px;
-  color: inherit;
-  max-width: 170px;
-}
-
-.provider-control > svg {
-  position: absolute;
-  right: 6px;
-  width: 10px;
-  pointer-events: none;
-}
-
 .ai-shortcut {
-  margin-left: auto;
   color: var(--muted);
   font-size: 9px;
   opacity: 0.8;
 }
 
 .send-btn {
+  flex-shrink: 0;
   width: 29px;
   height: 29px;
   border-radius: 50%;

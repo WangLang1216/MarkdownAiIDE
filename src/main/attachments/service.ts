@@ -16,8 +16,7 @@ const MAX_IMAGE_BYTES = 12 * 1024 * 1024
 const ALLOWED = new Map<string, string>([
   ['89504e47', 'image/png'],
   ['ffd8ff', 'image/jpeg'],
-  ['47494638', 'image/gif'],
-  ['52494646', 'image/webp']
+  ['47494638', 'image/gif']
 ])
 
 function sniffMime(buffer: Buffer): string | null {

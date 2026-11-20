@@ -16,7 +16,7 @@ import {
 } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab, redo, undo } from '@codemirror/commands'
 import { GFM } from '@lezer/markdown'
-import { HighlightStyle, indentOnInput, syntaxHighlighting } from '@codemirror/language'
+import { HighlightStyle, indentOnInput, syntaxHighlighting, syntaxTree } from '@codemirror/language'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { tags } from '@lezer/highlight'
 import {
@@ -82,6 +82,19 @@ const editorTheme = EditorView.theme({
   '.cm-line': { padding: '0' },
   '.cm-gutters': { backgroundColor: 'var(--page)', color: 'var(--muted)', border: 'none' }
 })
+
+function endHeading(view: EditorView): boolean {
+  const { state } = view
+  if (view.composing || state.readOnly || state.selection.ranges.length !== 1) return false
+  const range = state.selection.main
+  const line = state.doc.lineAt(range.head)
+  if (!range.empty || range.head !== line.to) return false
+  let node = syntaxTree(state).resolveInner(line.to, -1)
+  while (node.parent && !/^ATXHeading[1-6]$/.test(node.name)) node = node.parent
+  if (!/^ATXHeading[1-6]$/.test(node.name) || node.from !== line.from) return false
+  view.dispatch(state.replaceSelection('\n\n'), { scrollIntoView: true, userEvent: 'input' })
+  return true
+}
 
 function typewriterExtension(): Extension {
   return ViewPlugin.fromClass(
@@ -158,7 +171,7 @@ export class EditorController implements EditorFacade {
       EditorState.tabSize.of(2),
       EditorView.lineWrapping,
       markdown({ base: markdownLanguage, extensions: [GFM] }),
-      keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+      keymap.of([{ key: 'Enter', run: endHeading }, ...defaultKeymap, ...historyKeymap, indentWithTab]),
       search({ top: false }),
       ghostField,
       ghostKeymap,
@@ -328,6 +341,33 @@ export class EditorController implements EditorFacade {
     if (this.locked) return false
     const snippet = snippetById(elementId)
     if (!snippet || !snippet.markdown) return false
+    const { from, to } = this.getSelection()
+    const selected = this.view.state.doc.sliceString(from, to)
+    if (selected && elementId === 'link') {
+      this.wrapLink()
+      return true
+    }
+    const wrappers: Record<string, [string, string]> = {
+      mark: ['==', '=='], sup: ['^', '^'], sub: ['~', '~'], strike: ['~~', '~~'],
+      underline: ['<u>', '</u>'], 'anchor-link': ['[', '](#section-id)'],
+      footnote: ['', '[^1]\n\n[^1]: 在这里写脚注内容。']
+    }
+    const markers = wrappers[elementId]
+    if (selected && markers) {
+      this.wrapWith(markers[0], markers[1])
+      return true
+    }
+    if (this.formatParagraphs(elementId)) return true
+    if (selected) {
+      const block = elementId === 'code' || elementId === 'mermaid'
+        ? `\`\`\`${elementId === 'mermaid' ? 'mermaid' : ''}\n${selected}\n\`\`\``
+        : elementId === 'math' ? `$$\n${selected}\n$$`
+          : elementId === 'deflist' ? `${selected}\n: 定义内容`
+            : `${selected}\n\n${snippet.markdown}`
+      const { change } = this.buildInsertion(block)
+      this.replaceRange(change.from, change.to, change.insert)
+      return true
+    }
     const { change, bodyOffset } = this.buildInsertion(snippet.markdown)
     const selection = snippet.select
       ? {
@@ -343,6 +383,56 @@ export class EditorController implements EditorFacade {
       const from = change.from + bodyOffset
       this.callbacks.onEmojiInserted?.({ from, to: from + snippet.markdown.length })
     }
+    this.view.focus()
+    return true
+  }
+
+  private formatParagraphs(id: string): boolean {
+    if (!/^(h[123]|heading-id|paragraph|quote|callout|list|ordered|tasks)$/.test(id)) return false
+    const { doc } = this.view.state
+    const { from, to } = this.getSelection()
+    const start = doc.lineAt(from)
+    const end = doc.lineAt(from === to ? to : to - 1)
+    const marker = /^\s*(?:#{1,6}\s+|>\s*|(?:[-+*]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)/
+    let first = start.number
+    let last = end.number
+    const isContinuation = (text: string): boolean => Boolean(text.trim()) && !marker.test(text)
+    if (start.text.trim() && !marker.test(start.text)) {
+      while (first > 1 && isContinuation(doc.line(first - 1).text)) first--
+    }
+    if (end.text.trim() && !marker.test(end.text)) {
+      while (last < doc.lines && isContinuation(doc.line(last + 1).text)) last++
+    }
+    const paragraphs: string[] = []
+    let paragraph: string[] = []
+    const flush = (): void => {
+      if (paragraph.length) paragraphs.push(paragraph.join(' '))
+      paragraph = []
+    }
+    for (let number = first; number <= last; number++) {
+      const line = doc.line(number).text
+      if (!line.trim() || marker.test(line)) flush()
+      if (line.trim()) paragraph.push(line.replace(marker, '').trim())
+      if (marker.test(line)) flush()
+    }
+    flush()
+    if (!paragraphs.length) return false
+    const prefixes: Record<string, string> = {
+      h1: '# ', h2: '## ', h3: '### ', 'heading-id': '## ', quote: '> ',
+      callout: '> 提示：', list: '- ', tasks: '- [ ] '
+    }
+    const body = paragraphs.map((content, index) => {
+      const prefix = id === 'ordered' ? `${index + 1}. ` : (prefixes[id] ?? '')
+      const suffix = id === 'heading-id' ? ` {#section-${first + index}}` : ''
+      return prefix + content + suffix
+    }).join(/^(list|ordered|tasks)$/.test(id) ? '\n' : '\n\n')
+    const begin = doc.line(first).from
+    const finish = doc.line(last).to
+    this.view.dispatch({
+      changes: { from: begin, to: finish, insert: body },
+      selection: from === to ? { anchor: begin + body.length } : { anchor: begin, head: begin + body.length },
+      scrollIntoView: true
+    })
     this.view.focus()
     return true
   }
@@ -373,16 +463,21 @@ export class EditorController implements EditorFacade {
   }
 
   /** 在选区前后包裹 Markdown 标记。 */
-  wrapSelection(kind: 'bold' | 'italic' | 'code' | 'strike' | 'underline'): void {
+  wrapSelection(kind: 'bold' | 'italic' | 'code' | 'strike' | 'underline' | 'mark'): void {
     if (this.locked) return
     const markers: Record<typeof kind, [string, string]> = {
       bold: ['**', '**'],
       italic: ['*', '*'],
       code: ['`', '`'],
       strike: ['~~', '~~'],
-      underline: ['<u>', '</u>']
+      underline: ['<u>', '</u>'],
+      mark: ['==', '==']
     }
     const [open, close] = markers[kind]
+    this.wrapWith(open, close)
+  }
+
+  private wrapWith(open: string, close: string): void {
     const { from, to } = this.getSelection()
     const selected = this.view.state.doc.sliceString(from, to)
     if (selected) {
@@ -426,6 +521,7 @@ export class EditorController implements EditorFacade {
     const pairs: Array<[string, string]> = [
       ['**', '**'],
       ['~~', '~~'],
+      ['==', '=='],
       ['<u>', '</u>'],
       ['*', '*'],
       ['`', '`']
@@ -443,6 +539,7 @@ export class EditorController implements EditorFacade {
     const cleaned = raw
       .replace(/\*\*(.+?)\*\*/g, '$1')
       .replace(/~~(.+?)~~/g, '$1')
+      .replace(/==(.+?)==/g, '$1')
       .replace(/<u>(.+?)<\/u>/g, '$1')
       .replace(/\*(.+?)\*/g, '$1')
       .replace(/`(.+?)`/g, '$1')

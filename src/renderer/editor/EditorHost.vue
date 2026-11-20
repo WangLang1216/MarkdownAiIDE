@@ -15,6 +15,7 @@ import { editorApi } from '../lib/editorApi'
 import { insertImageElement } from '../lib/actions'
 
 type ContextAction =
+  | 'mark'
   | 'bold'
   | 'italic'
   | 'underline'
@@ -277,6 +278,7 @@ async function runMenuAction(action: ContextAction): Promise<void> {
   switch (action) {
     case 'bold':
     case 'italic':
+    case 'mark':
     case 'underline':
     case 'strike':
     case 'code':

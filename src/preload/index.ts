@@ -60,6 +60,7 @@ const api: DesktopAPI = {
     saveAs: (documentId) => invoke(IPC.documents.saveAs, documentId),
     close: (documentId) => invoke(IPC.documents.close, documentId),
     listOpen: () => invoke(IPC.documents.listOpen),
+    reorderOpen: (ids) => invoke(IPC.documents.reorderOpen, ids),
     recent: () => invoke(IPC.documents.recent),
     resolveConflict: (documentId, choice) => invoke(IPC.documents.resolveConflict, documentId, choice),
     recoveryList: () => invoke(IPC.documents.recoveryList),
@@ -101,12 +102,14 @@ const api: DesktopAPI = {
     start: (input) => invoke(IPC.agent.start, input),
     cancel: (taskId) => invoke(IPC.agent.cancel, taskId),
     answer: (answer) => invoke(IPC.agent.answer, answer),
-    snapshot: (taskId) => invoke(IPC.agent.snapshot, taskId)
+    snapshot: (taskId) => invoke(IPC.agent.snapshot, taskId),
+    history: (documentId, offset) => invoke(IPC.agent.history, documentId, offset),
+    deleteHistory: (documentId, ids) => invoke(IPC.agent.deleteHistory, documentId, ids)
   },
   changes: {
     review: (changeSetId) => invoke(IPC.changes.review, changeSetId),
-    accept: (changeSetId, proposalDigest) => invoke(IPC.changes.accept, changeSetId, proposalDigest),
-    reject: (changeSetId) => invoke(IPC.changes.reject, changeSetId),
+    accept: (changeSetId, proposalDigest, documentId) => invoke(IPC.changes.accept, changeSetId, proposalDigest, documentId),
+    reject: (changeSetId, documentId) => invoke(IPC.changes.reject, changeSetId, documentId),
     restore: (transactionId) => invoke(IPC.changes.restore, transactionId),
     list: () => invoke(IPC.changes.list)
   },

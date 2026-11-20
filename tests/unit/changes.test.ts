@@ -4,9 +4,14 @@ import { buildDiff } from '@shared/diff'
 import {
   assessRisk,
   assertNoOverlap,
+  isLargeEdit,
   planOperation,
   type DocumentContext
 } from '../../src/main/changes/engine'
+
+import { resolveAgentScope } from '@shared/agentScope'
+import { shouldAutoApply } from '../../src/main/agent/approval'
+import type { ReviewFile } from '@shared/types'
 
 const engineApply = applyEditsToText
 
@@ -188,5 +193,49 @@ describe('变更引擎', () => {
     expect(diff.some((line) => line.type === 'del' && line.text === 'b')).toBe(true)
     expect(diff.some((line) => line.type === 'add' && line.text === 'c')).toBe(true)
     expect(diff.filter((line) => line.type === 'context').length).toBeGreaterThan(0)
+  })
+})
+
+describe('AI 修改审批', () => {
+  it('自动范围按权限启用工作区，同时尊重用户明确选择的范围', () => {
+    expect(resolveAgentScope('auto', 'ask', true)).toBe('document')
+    expect(resolveAgentScope('auto', 'assisted', true)).toBe('workspace')
+    expect(resolveAgentScope('auto', 'full_access', true)).toBe('workspace')
+    expect(resolveAgentScope('auto', 'full_access', false)).toBe('document')
+    expect(resolveAgentScope('document', 'full_access', true)).toBe('document')
+    expect(resolveAgentScope('selection', 'assisted', true)).toBe('selection')
+    expect(resolveAgentScope('workspace', 'ask', true)).toBe('workspace')
+  })
+
+  const file: ReviewFile = {
+    key: 'doc_1', title: '说明.md', relativePath: '说明.md', documentId: 'doc_1',
+    kind: 'replace_range', summary: '', additions: 1, deletions: 0, diff: [], issues: []
+  }
+  const small = { autoApplicable: true, files: [file] }
+  const important = { autoApplicable: false, files: [file] }
+
+  it('请求批准要求手动确认所有修改', () => {
+    expect(shouldAutoApply('ask', small, 'doc_1')).toBe(false)
+    expect(shouldAutoApply('ask', important, 'doc_1')).toBe(false)
+  })
+
+  it('帮我批准只自动应用当前文档的小幅低风险修改', () => {
+    expect(shouldAutoApply('assisted', small, 'doc_1')).toBe(true)
+    expect(shouldAutoApply('assisted', important, 'doc_1')).toBe(false)
+    expect(shouldAutoApply('assisted', small, 'doc_2')).toBe(false)
+    expect(shouldAutoApply('assisted', small, null)).toBe(false)
+  })
+
+  it('完全访问不因修改规模或结构风险进入审批', () => {
+    expect(shouldAutoApply('full_access', important, null)).toBe(true)
+  })
+
+  it('识别大范围增删，同时忽略替换内容中保留的前缀和后缀', () => {
+    const before = '甲'.repeat(1500) + '旧' + '乙'.repeat(1500)
+    expect(isLargeEdit(before, [{ from: 0, to: before.length, insert: before.replace('旧', '新') }], 1)).toBe(false)
+    expect(isLargeEdit('', [{ from: 0, to: 0, insert: '甲'.repeat(1200) }], 1)).toBe(true)
+    expect(isLargeEdit('', [{ from: 0, to: 0, insert: '甲\\n'.repeat(20) }], 20)).toBe(true)
+    expect(isLargeEdit(before, [{ from: 0, to: 800, insert: '' }, { from: 900, to: 1700, insert: '' }], 1)).toBe(true)
+    expect(isLargeEdit('甲'.repeat(300), [{ from: 0, to: 151, insert: '' }], 1)).toBe(true)
   })
 })

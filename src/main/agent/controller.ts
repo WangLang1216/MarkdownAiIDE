@@ -4,7 +4,10 @@
  */
 
 import type {
+  AgentApprovalMode,
   AgentPhase,
+  AgentTaskScope,
+  ApplyResult,
   Attachment,
   ClarificationAnswer,
   DocumentSnapshot,
@@ -16,8 +19,11 @@ import type {
 } from '@shared/types'
 import { AppError, toErrorInfo } from '@shared/errors'
 import { StartTaskSchema, formatIssues } from '@shared/schemas'
+import { resolveAgentScope } from '@shared/agentScope'
 import { parseSections } from '@shared/markdown/outline'
-import { newId } from '../utils/fs'
+import { AgentHistory } from './history'
+import { shouldAutoApply } from './approval'
+import { newId, sha256 } from '../utils/fs'
 import { logger } from '../utils/logger'
 import type { ProviderService } from '../providers/service'
 import type { ProviderMessage, ProviderToolCall } from '../providers/types'
@@ -37,6 +43,7 @@ type AnswerResolution = (value: string | null) => void
 
 interface TaskRecord {
   taskId: string
+  approvalMode: AgentApprovalMode
   summary: TaskSummary
   phase: AgentPhase
   text: string
@@ -47,7 +54,9 @@ interface TaskRecord {
   abort: AbortController
   answer: AnswerResolution | null
   sequence: number
-  autoApplyTried: boolean
+  historyKey: string
+  stepsText: string
+  historyText: string
 }
 
 interface Deps {
@@ -77,6 +86,8 @@ const TOOL_TITLES: Record<string, string> = {
 
 /** 组织显式 Agent 任务的上下文准备、模型轮次、工具调用、澄清与状态事件。 */
 export class AgentController {
+  private readonly history = new AgentHistory()
+  private readonly linkedDrafts = new Set<string>()
   private tasks = new Map<string, TaskRecord>()
   private sink: ((event: TaskEvent) => void) | null = null
 
@@ -95,12 +106,80 @@ export class AgentController {
     return {
       task: { ...record.summary },
       phase: record.phase,
-      text: record.text,
+      text: record.historyText || record.text,
+      stepsText: record.stepsText,
       toolLog: record.toolLog.map((item) => ({ ...item })),
       clarification: record.clarification ? { ...record.clarification } : null,
       proposalId: record.proposalId,
       error: record.error ? { ...record.error } : null
     }
+  }
+
+  private historyKey(documentId: string | null): string {
+    if (!documentId) return sha256('workspace:' + (this.deps.workspace.getCurrent()?.rootPath ?? ''))
+    const path = this.deps.documents.getAbsPath(documentId)
+    return sha256(path ? 'file:' + (process.platform === 'win32' ? path.toLowerCase() : path) : 'draft:' + documentId)
+  }
+
+  linkDraftHistory(documentId: string): void {
+    const from = sha256('draft:' + documentId)
+    const to = this.historyKey(documentId)
+    if (from === to || this.linkedDrafts.has(documentId)) return
+    this.linkedDrafts.add(documentId)
+    for (const record of this.tasks.values()) {
+      if (record.historyKey === from) record.historyKey = to
+    }
+    void this.history.move(from, to).catch((error) => {
+      this.linkedDrafts.delete(documentId)
+      logger.warn('agent', '迁移草稿对话失败', { message: String(error) })
+    })
+  }
+
+  async recordReview(taskId: string, documentId: string | null | undefined, result: ApplyResult | null): Promise<void> {
+    const record = this.tasks.get(taskId)
+    const key = record?.historyKey ?? (documentId === undefined ? null : this.historyKey(documentId))
+    if (!key) return
+    const status = !result ? 'cancelled' : result.status === 'applied' ? 'applied' : 'reviewing'
+    if (record) {
+      record.summary.status = status
+      record.phase = status
+      if (result?.message) record.historyText = result.message
+    }
+    await this.history.update(key, taskId, (snapshot) => {
+      snapshot.task.status = status
+      snapshot.phase = status
+      if (result?.message) snapshot.text = result.message
+    }).catch((error) => logger.warn('agent', '保存审阅状态失败', { message: String(error) }))
+  }
+
+  listHistory(documentId: string | null, offset: number): Promise<TaskSnapshot[]> {
+    return this.history.list(this.historyKey(documentId), offset, 20)
+  }
+
+  deleteHistory(documentId: string | null, ids: string[] | null): Promise<void> {
+    return this.history.remove(this.historyKey(documentId), ids)
+  }
+
+  private async conversation(key: string, taskId: string): Promise<ProviderMessage[]> {
+    const recent = await this.history.list(key, 0, 24).catch((error) => {
+      logger.warn('agent', '读取对话历史失败', { message: String(error) })
+      return []
+    })
+    const messages: ProviderMessage[] = []
+    let remaining = 12_000
+    const excerpt = (value: string): string => value.length <= 1600
+      ? value
+      : value.slice(0, 800) + '\n…\n' + value.slice(-797)
+    for (const entry of recent) {
+      if (entry.task.taskId === taskId || !['completed', 'applied', 'reviewing'].includes(entry.task.status)) continue
+      const question = excerpt(entry.task.prompt)
+      const reply = excerpt(entry.text)
+      if (!reply.trim()) continue
+      remaining -= question.length + reply.length
+      if (remaining < 0) break
+      messages.unshift({ role: 'user', content: question }, { role: 'assistant', content: reply })
+    }
+    return messages
   }
 
   /** 校验任务输入和模型配置，登记并异步运行任务，立即返回任务标识。 */
@@ -114,7 +193,16 @@ export class AgentController {
       : this.deps.providers.getDefault()
     if (!provider.capabilities.text) throw new AppError('CAPABILITY_MISSING', '当前模型不支持文本生成。')
 
+    const workspace = this.deps.workspace.getCurrent()
+    const approvalMode = this.deps.settings.get().agent.approvalMode
+    const scope = resolveAgentScope(data.scope, approvalMode, Boolean(workspace))
     const activeDocument = data.documentId ? await this.deps.documents.syncForAgent(data.documentId) : null
+    if (scope === 'selection' && (
+      !activeDocument || !data.selection || data.selection.from >= data.selection.to ||
+      data.selection.to > activeDocument.text.length
+    )) {
+      throw new AppError('INVALID_INPUT', '请先选中需要修改的内容。')
+    }
     const attachments: Attachment[] = []
     for (const id of data.attachmentIds) {
       try {
@@ -133,12 +221,13 @@ export class AgentController {
       taskId,
       documentId: activeDocument?.documentId ?? null,
       documentTitle: activeDocument?.title ?? '工作区',
-      prompt: data.prompt.slice(0, 200),
+      prompt: data.prompt,
       status: 'running',
       createdAt: Date.now()
     }
     const record: TaskRecord = {
       taskId,
+      approvalMode,
       summary,
       phase: 'preparing',
       text: '',
@@ -149,20 +238,24 @@ export class AgentController {
       abort: new AbortController(),
       answer: null,
       sequence: 0,
-      autoApplyTried: false
+      historyKey: this.historyKey(data.documentId),
+      historyText: '',
+      stepsText: ''
     }
     this.register(record)
     this.emit(record, { type: 'started', task: { ...summary } })
 
     void this.run(
       record,
-      data,
+      { ...data, scope },
       provider.providerId,
       activeDocument,
       attachments,
       citationBundle,
-      sourceIds
+      sourceIds,
+      workspace
     ).catch((error) => {
+      if (record.abort.signal.aborted) return
       const info = toErrorInfo(error)
       record.error = { code: info.code, message: info.message, retryable: info.retryable }
       record.summary.status = 'failed'
@@ -177,7 +270,7 @@ export class AgentController {
   /** 发出中止信号，并解除任务对用户澄清答复的等待。 */
   async cancel(taskId: string): Promise<void> {
     const record = this.tasks.get(taskId)
-    if (!record) return
+    if (!record || record.phase === 'applying') return
     if (['completed', 'failed', 'cancelled', 'applied'].includes(record.summary.status)) return
     record.abort.abort()
     record.answer?.(null)
@@ -202,12 +295,13 @@ export class AgentController {
 
   private async run(
     record: TaskRecord,
-    input: StartTaskInput,
+    input: Omit<StartTaskInput, 'scope'> & { scope: AgentTaskScope },
     providerId: string,
     activeDocument: DocumentSnapshot | null,
     attachments: Attachment[],
     citationBundle: ContextBundle,
-    sourceIds: string[]
+    sourceIds: string[],
+    workspace: ReturnType<WorkspaceService['getCurrent']>
   ): Promise<void> {
     const provider = this.deps.providers.get(providerId)
     const adapter = this.deps.providers.adapterFor(provider)
@@ -233,8 +327,8 @@ export class AgentController {
     }
 
     const systemPrompt = buildSystemPrompt({
-      workspaceName: this.deps.workspace.getCurrent()?.name ?? null,
-      workspaceId: this.deps.workspace.getCurrent()?.workspaceId ?? null,
+      workspaceName: workspace?.name ?? null,
+      workspaceId: workspace?.workspaceId ?? null,
       activeDocument,
       outline,
       selection,
@@ -242,6 +336,7 @@ export class AgentController {
       visionAvailable,
       toolCalling,
       sources: citationBundle,
+      approvalMode: record.approvalMode,
       mode: input.mode,
       scope: input.scope
     })
@@ -255,6 +350,7 @@ export class AgentController {
 
     const messages: ProviderMessage[] = [
       { role: 'system', content: systemPrompt },
+      ...await this.conversation(record.historyKey, record.taskId),
       {
         role: 'user',
         content: input.prompt,
@@ -265,6 +361,7 @@ export class AgentController {
     const context: ToolContext = {
       taskId: record.taskId,
       activeDocumentId: activeDocument?.documentId ?? null,
+      workspaceId: workspace?.workspaceId ?? null,
       scope: input.scope,
       ...(selection ? { selection: { from: selection.from, to: selection.to } } : {}),
       attachmentIds: attachments.map((item) => item.attachmentId),
@@ -331,10 +428,16 @@ export class AgentController {
       if (!calls.length) {
         record.phase = 'completed'
         record.summary.status = 'completed'
-        this.emit(record, { type: 'completed', text: text || '任务已完成。' })
+        record.historyText = text || record.text || '任务已完成。'
+        this.emit(record, { type: 'completed', text: record.historyText })
         return
       }
 
+      if (text.trim()) {
+        record.stepsText += (record.stepsText ? '\n\n' : '') + text
+        record.text = ''
+        this.emit(record, { type: 'step_text', text })
+      }
       messages.push({ role: 'assistant', content: text, toolCalls: calls })
 
       for (const call of calls) {
@@ -358,6 +461,9 @@ export class AgentController {
 
         let outcome: ToolOutcome
         try {
+          if (input.mode === 'ask' && call.name === 'propose_changes') {
+            throw new AppError('OUT_OF_SCOPE', '问答任务不允许提交修改。')
+          }
           outcome = await this.deps.tools.execute(call.name, args, context)
         } catch (error) {
           outcome = {
@@ -391,7 +497,7 @@ export class AgentController {
             throw new AppError('PROVIDER_TIMEOUT', '等待澄清超时。')
           }
           record.summary.status = 'running'
-          record.phase = 'generating'
+          this.setPhase(record, 'generating', '继续处理')
           messages.push({
             role: 'tool',
             toolCallId: call.callId,
@@ -425,29 +531,41 @@ export class AgentController {
           record.summary.status = 'reviewing'
           record.phase = 'reviewing'
           const review = await this.deps.changes.review(outcome.proposalId)
-          this.emit(record, {
-            type: 'proposal_ready',
+          this.throwIfCancelled(record)
+          record.historyText = review.changeSet.summary
+          const proposalEvent = {
+            type: 'proposal_ready' as const,
             changeSetId: outcome.proposalId,
             summary: review.changeSet.summary,
             fileCount: review.files.length,
             risk: review.changeSet.risk
-          })
+          }
           if (
-            !record.autoApplyTried &&
             input.mode === 'edit' &&
-            settings.agent.autoApplyCurrentDocument &&
-            review.autoApplicable
+            shouldAutoApply(record.approvalMode, review, activeDocument?.documentId ?? null) &&
+            shouldAutoApply(this.deps.settings.get().agent.approvalMode, review, activeDocument?.documentId ?? null)
           ) {
-            record.autoApplyTried = true
+            const issue = review.changeSet.issues.find((item) => item.severity === 'error')
+            if (issue) throw new AppError(issue.code, issue.message)
+            this.setPhase(record, 'applying', '正在应用修改')
             const result = await this.deps.changes.accept(outcome.proposalId, review.changeSet.proposalDigest)
+            record.summary.status = result.status === 'applied' || result.status === 'partially_applied'
+              ? 'applied'
+              : 'failed'
+            record.phase = record.summary.status
+            record.historyText = record.summary.status === 'failed'
+              ? result.results.find((item) => item.status === 'failed')?.message ?? result.message
+              : result.status === 'applied' && result.results.length === 1
+                ? result.results[0].message
+                : result.message
             this.emit(record, {
               type: 'applied',
               transactionId: result.transactionId,
-              summary: result.message,
+              summary: record.historyText,
               status: result.status
             })
-            record.summary.status = result.status === 'applied' ? 'applied' : 'reviewing'
-            record.phase = result.status === 'applied' ? 'applied' : 'reviewing'
+          } else {
+            this.emit(record, proposalEvent)
           }
           return
         }
@@ -506,6 +624,15 @@ export class AgentController {
       taskId: record.taskId,
       sequence: record.sequence,
       timestamp: Date.now()
+    }
+    if (payload.type === 'completed' || payload.type === 'applied' || payload.type === 'proposal_ready' ||
+        payload.type === 'failed' || payload.type === 'cancelled') {
+      const snapshot = this.snapshot(record.taskId)
+      if (snapshot) {
+        void this.history.save(record.historyKey, snapshot).catch((error) => {
+          logger.warn('agent', '保存对话历史失败', { message: String(error) })
+        })
+      }
     }
     this.sink?.(event)
   }

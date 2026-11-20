@@ -1,5 +1,5 @@
 /**
- * 参考材料服务：把图片、网页、MD/TXT、DOCX、PDF 解析为可定位的片段。
+ * 参考材料服务：将图片、网页、文档和纯文本解析为可定位的片段。
  * 每个来源都有独立版本、内容指纹与定位信息；模型只能引用已存在的 sourceId/chunkId。
  */
 
@@ -34,6 +34,7 @@ import { logger } from '../utils/logger'
 import type { DocumentService } from '../documents/service'
 import type { WorkspaceService } from '../workspace/service'
 import type { AttachmentService } from '../attachments/service'
+import { extractOfficeText } from './office'
 import { fetchPage } from './web'
 
 const MAX_SOURCE_BYTES = 15 * 1024 * 1024
@@ -147,16 +148,23 @@ export class ReferenceService {
     }
     const rawName = basename(name || '参考文件')
     const ext = extname(rawName).toLowerCase()
-    if (!['.md', '.markdown', '.txt', '.docx', '.pdf'].includes(ext)) {
-      throw new AppError('INVALID_INPUT', '支持 Markdown、TXT、DOCX 与 PDF 文件。')
-    }
+
     const dir = join(appPaths().referencesDir, 'imports', newId('ref'))
     await mkdir(dir, { recursive: true })
     // 复用图片的清洗规则：保留中文、字母数字与短横线
-    const safeName = `${sanitizeImageName(rawName)}${ext}`
+    const safeName = sanitizeImageName(rawName) + (/^\.[a-z0-9]{1,23}$/.test(ext) ? ext : '')
     const absPath = join(dir, safeName)
     await writeFile(absPath, buffer)
-    return this.add({ kind: 'file', path: absPath, roles: ['facts'], title: rawName })
+    try {
+      return await this.add({ kind: 'file', path: absPath, roles: ['facts'], title: rawName })
+    } catch (error) {
+      if (!(error instanceof AppError) || error.code !== 'SOURCE_UNREADABLE') throw error
+      return this.storeFileAsset({
+        sourceId: newId('src'), title: rawName, roles: ['facts'], relativePath: safeName,
+        contentHash: sha256(buffer), kind: 'file', chunks: [], status: 'partial',
+        message: '已附加文件。' + error.message
+      })
+    }
   }
 
   /** 通过系统选择器添加用户指定的本地参考文件。 */
@@ -165,7 +173,7 @@ export class ReferenceService {
       title: '选择参考文件',
       properties: ['openFile', 'multiSelections'],
       filters: [
-        { name: '可读取的文档', extensions: ['md', 'markdown', 'txt', 'docx', 'pdf'] },
+        { name: '可读取的文档', extensions: ['md', 'markdown', 'txt', 'docx', 'pdf', 'xlsx', 'pptx', 'odt', 'ods', 'odp'] },
         { name: '全部文件', extensions: ['*'] }
       ]
     })
@@ -329,7 +337,8 @@ export class ReferenceService {
 
     try {
       if (ext === '.md' || ext === '.markdown' || ext === '.txt') {
-        const text = normalizeToLf(await readFile(absPath, 'utf8'))
+        const text = normalizeToLf(decodeReferenceText(await readFile(absPath)) ?? '')
+        if (!text.trim()) throw new AppError('SOURCE_UNREADABLE', '文件无可提取的文字。')
         const drafts =
           ext === '.txt'
             ? chunkParagraphs(text, paragraphLocator(relativePath))
@@ -396,7 +405,22 @@ export class ReferenceService {
         })
       }
 
-      throw new AppError('SOURCE_UNREADABLE', '只支持 MD、TXT、DOCX、PDF 与图片。')
+      const buffer = await readFile(absPath)
+      const text = extractOfficeText(ext, buffer) ?? decodeReferenceText(buffer)
+      const drafts = text ? chunkParagraphs(normalizeToLf(text), paragraphLocator(relativePath)) : []
+      return this.storeFileAsset({
+        sourceId,
+        title: input.title || basename(absPath),
+        roles,
+        relativePath,
+        contentHash: sha256(buffer),
+        kind: 'file',
+        chunks: drafts.map((draft, index) => ({
+          ...draft, sourceId, sourceVersion: 1, chunkId: sourceId + ':1:' + index, uncertain: false
+        })),
+        status: drafts.length ? 'ready' : 'partial',
+        message: drafts.length ? null : '已附加文件。此格式的正文无法提取，AI 仅能看到文件名和读取状态。'
+      })
     } catch (error) {
       logger.warn('references', '文件解析失败', { name: basename(absPath), message: messageOf(error) })
       throw error instanceof AppError ? error : new AppError('SOURCE_UNREADABLE', messageOf(error))
@@ -470,6 +494,15 @@ export class ReferenceService {
       if (!stored || stored.asset.status === 'failed' || stored.asset.status === 'removed') continue
       const label = `S${includedSources.length + 1}`
       includedSources.push({ sourceId, title: stored.asset.title, label })
+      if (!stored.chunks.length && stored.asset.message) {
+        const block = '[' + label + '] 《' + stored.asset.title + '》：' + stored.asset.message
+        if (used + block.length <= budget) {
+          used += block.length
+          lines.push(block)
+        } else {
+          truncated = true
+        }
+      }
       const ranked = [...stored.chunks].sort((a, b) => scoreChunk(b.text, terms) - scoreChunk(a.text, terms))
       const selected: SourceChunk[] = []
       const head = stored.chunks[0]
@@ -549,6 +582,18 @@ export class ReferenceService {
 
 function defaultRoles(kind: AddSourceInput['kind']): ReferenceRole[] {
   return kind === 'image' ? ['data'] : ['facts']
+}
+
+function decodeReferenceText(buffer: Buffer): string | null {
+  let encoding = 'utf-8'
+  if (buffer[0] === 0xff && buffer[1] === 0xfe) encoding = 'utf-16le'
+  if (buffer[0] === 0xfe && buffer[1] === 0xff) encoding = 'utf-16be'
+  try {
+    const text = new TextDecoder(encoding, { fatal: true }).decode(buffer)
+    return /[\u0000-\u0008\u000e-\u001f]/.test(text) ? null : text
+  } catch {
+    return null
+  }
 }
 
 function extractTerms(query: string): string[] {

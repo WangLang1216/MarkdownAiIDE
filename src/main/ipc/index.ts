@@ -237,6 +237,13 @@ export function registerIpc(context: IpcContext): void {
   })
 
   handle(IPC.documents.listOpen, async () => context.documents.listOpen())
+  handle(IPC.documents.reorderOpen, async (ids) => {
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string')) {
+      throw new AppError('INVALID_INPUT', '无效的文稿 ID 列表。')
+    }
+    context.documents.reorderOpen(ids)
+    await context.lifecycle.persistOpenFiles()
+  })
 
   handle(IPC.documents.recent, async () => context.documents.recent())
 
@@ -404,6 +411,15 @@ export function registerIpc(context: IpcContext): void {
 
   /* ------------------------------- agent ------------------------------ */
 
+  handle(IPC.agent.history, async (documentId, offset) =>
+    context.agent.listHistory(documentId === null ? null : asString(documentId, '文稿 ID'), Number.isSafeInteger(offset) && Number(offset) >= 0 ? Number(offset) : 0)
+  )
+  handle(IPC.agent.deleteHistory, async (documentId, ids) => {
+    if (ids !== null && (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string'))) {
+      throw new AppError('INVALID_INPUT', '无效的任务 ID 列表。')
+    }
+    await context.agent.deleteHistory(documentId === null ? null : asString(documentId, '文稿 ID'), ids)
+  })
   handle(IPC.agent.start, async (input) => context.agent.start(input as StartTaskInput))
   handle(IPC.agent.cancel, async (taskId) => context.agent.cancel(asString(taskId, '任务 ID')))
   handle(IPC.agent.answer, async (answer) => context.agent.answer(answer as ClarificationAnswer))
@@ -412,10 +428,19 @@ export function registerIpc(context: IpcContext): void {
   /* ------------------------------ changes ----------------------------- */
 
   handle(IPC.changes.review, async (changeSetId) => context.changes.review(asString(changeSetId, '提案 ID')))
-  handle(IPC.changes.accept, async (changeSetId, digest) =>
-    context.changes.accept(asString(changeSetId, '提案 ID'), asString(digest, '提案摘要'))
-  )
-  handle(IPC.changes.reject, async (changeSetId) => context.changes.reject(asString(changeSetId, '提案 ID')))
+  handle(IPC.changes.accept, async (changeSetId, digest, documentId) => {
+    const id = asString(changeSetId, '提案 ID')
+    const review = await context.changes.review(id)
+    const result = await context.changes.accept(id, asString(digest, '提案摘要'))
+    await context.agent.recordReview(review.changeSet.taskId, documentId === null || documentId === undefined ? documentId : asString(documentId, '文稿 ID'), result)
+    return result
+  })
+  handle(IPC.changes.reject, async (changeSetId, documentId) => {
+    const id = asString(changeSetId, '提案 ID')
+    const review = await context.changes.review(id)
+    await context.changes.reject(id)
+    await context.agent.recordReview(review.changeSet.taskId, documentId === null || documentId === undefined ? documentId : asString(documentId, '文稿 ID'), null)
+  })
   handle(IPC.changes.restore, async (transactionId) =>
     context.changes.restore(asString(transactionId, '事务 ID'))
   )

@@ -287,8 +287,11 @@ export class WorkspaceService {
   /**
    * 优先系统回收站；不可用时复制到应用恢复区再删除，绝不静默永久删除。
    */
-  async remove(relativePath: string): Promise<FileOperationResult> {
-    this.requireCurrent()
+  async remove(relativePath: string, expectedWorkspaceId?: string): Promise<FileOperationResult> {
+    const workspace = this.requireCurrent()
+    if (expectedWorkspaceId && expectedWorkspaceId !== workspace.workspaceId) {
+      throw new AppError('OUT_OF_SCOPE', '目标工作区已变化，无法删除文件。')
+    }
     const abs = await this.resolveExisting(relativePath)
     const info = await stat(abs)
     if (info.isDirectory()) {

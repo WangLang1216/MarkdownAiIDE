@@ -177,6 +177,29 @@ export function assessRisk(operations: ChangeOperation[]): { risk: 'low' | 'high
   return { risk, autoApplicable }
 }
 
+/** 判断编辑是否超过辅助审批允许的行数、字符数或正文改写比例。 */
+export function isLargeEdit(before: string, edits: TextEdit[], changedLines: number): boolean {
+  if (changedLines >= 20) return true
+  let changedCharacters = 0
+  let removedCharacters = 0
+  for (const edit of edits) {
+    const removed = before.slice(edit.from, edit.to)
+    const inserted = edit.insert
+    let head = 0
+    let removedEnd = removed.length
+    let insertedEnd = inserted.length
+    while (head < removedEnd && head < insertedEnd && removed[head] === inserted[head]) head++
+    while (removedEnd > head && insertedEnd > head && removed[removedEnd - 1] === inserted[insertedEnd - 1]) {
+      removedEnd--
+      insertedEnd--
+    }
+    changedCharacters += Math.max(removedEnd, insertedEnd) - head
+    removedCharacters += removedEnd - head
+    if (changedCharacters >= 1200) return true
+  }
+  return before.length >= 200 && removedCharacters >= before.length / 2
+}
+
 /** 生成插入内容的纯文本摘要，用于任务面板提示 */
 export function summarizeInsertion(markdown: string, maxLength = 90): string {
   const firstLine =

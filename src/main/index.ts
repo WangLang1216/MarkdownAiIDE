@@ -4,7 +4,7 @@
  */
 
 import { stat } from 'node:fs/promises'
-import { app, BrowserWindow, Menu, Tray, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, Menu, Notification, Tray, nativeImage, shell } from 'electron'
 import { IPC } from '@shared/ipc'
 import { appIconPath } from './app/icon'
 import { appPaths, configureCacheDir, ensureAppDirectories } from './utils/paths'
@@ -32,7 +32,25 @@ import { demoDefaultDocument, ensureDemoWorkspace } from './app/demo'
 import { runVisualHarness } from './dev/harness'
 import { pathExists } from './utils/fs'
 
+function createUnreadDot(): Electron.NativeImage {
+  const size = 16
+  const bitmap = Buffer.alloc(size * size * 4)
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const distance = Math.hypot(x - 8.5, y - 6.5)
+      if (distance > 5.5) continue
+      const offset = (y * size + x) * 4
+      bitmap[offset] = 47
+      bitmap[offset + 1] = 46
+      bitmap[offset + 2] = 223
+      bitmap[offset + 3] = 255
+    }
+  }
+  return nativeImage.createFromBitmap(bitmap, { width: size, height: size })
+}
+
 registerMediaScheme()
+if (process.platform === 'win32') app.setAppUserModelId('cn.moye.markdownide')
 app.setName('墨页')
 /** 开发/预览进程改用独立数据目录，避免与已安装版本争用单实例锁与磁盘缓存 */
 const devUserData = isolateDevUserData()
@@ -223,8 +241,39 @@ async function bootstrap(): Promise<void> {
   registerIpc(context)
   const notifier = createNotifier(context)
 
-  agent.setSink((event) => notifier.agent(event))
-  documents.onChanged((snapshot, origin) => notifier.document({ snapshot, origin }))
+  const unreadDot = createUnreadDot()
+  const notifiedTasks = new Set<string>()
+  agent.setSink((event) => {
+    notifier.agent(event)
+    const window = mainWindow
+    if (!window || window.isDestroyed() || (window.isFocused() && window.isVisible())) return
+    if (event.type !== 'completed' && event.type !== 'applied' && event.type !== 'proposal_ready' &&
+        event.type !== 'failed') return
+    if (process.platform === 'win32') window.setOverlayIcon(unreadDot, '有新的 AI 任务结果')
+    else if (process.platform === 'darwin') app.dock?.setBadge('●')
+    else window.flashFrame(true)
+    if (Notification.isSupported() && !notifiedTasks.has(event.taskId)) {
+      notifiedTasks.add(event.taskId)
+      if (notifiedTasks.size > 100) {
+        const oldest = notifiedTasks.values().next().value
+        if (oldest) notifiedTasks.delete(oldest)
+      }
+      const task = agent.snapshot(event.taskId)?.task
+      const failed = event.type === 'failed' ||
+        (event.type === 'applied' && (event.status === 'failed' || event.status === 'conflict'))
+      const notification = new Notification({
+        title: failed ? 'AI 任务失败' : event.type === 'proposal_ready' ? 'AI 建议待审阅' : 'AI 任务已完成',
+        body: task?.documentTitle ?? '写作助手',
+        icon: appIconPath() ?? undefined
+      })
+      notification.on('click', showMainWindow)
+      notification.show()
+    }
+  })
+  documents.onChanged((snapshot, origin) => {
+    if (snapshot.existsOnDisk) agent.linkDraftHistory(snapshot.documentId)
+    notifier.document({ snapshot, origin })
+  })
   documents.onConflict((conflict) => notifier.conflict(conflict))
   workspace.onWorkspaceChange((event) => {
     notifier.workspace(event)
@@ -232,6 +281,9 @@ async function bootstrap(): Promise<void> {
   })
 
   mainWindow.on('focus', () => {
+    if (process.platform === 'win32') mainWindow?.setOverlayIcon(null, '')
+    else if (process.platform === 'darwin') app.dock?.setBadge('')
+    else mainWindow?.flashFrame(false)
     for (const snapshot of documents.listOpen()) {
       if (snapshot.existsOnDisk) void documents.checkExternal(snapshot.documentId)
     }

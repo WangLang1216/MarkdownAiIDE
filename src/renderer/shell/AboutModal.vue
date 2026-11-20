@@ -12,10 +12,10 @@ const ui = useUiStore()
 
 const version = computed(() => settings.appInfo?.version ?? '1.0.0')
 const iconDataUrl = computed(() => settings.appInfo?.iconDataUrl ?? null)
-const repository = 'https://github.com/xiaopengyou/markdown-ide'
+const repository = 'https://github.com/WangLang1216/MarkdownAiIDE'
 
 const facts: Array<{ label: string; value: string }> = [
-  { label: '作者', value: '彭友 · Xiaopengyou Studio' },
+  { label: '作者', value: '小彭 · Xiaopeng' },
   { label: '发布日期', value: '2026 年 11 月' },
   { label: '开源许可', value: 'MIT License' },
   { label: '技术栈', value: 'Electron 45 · Vue 3 · TypeScript · CodeMirror 6' }
@@ -58,7 +58,7 @@ function openRepository(): void {
 
       <div class="about-links">
         <button class="ghostbtn" @click="openRepository">
-          <Icon name="external-link" :size="13" />GitHub 仓库
+          <Icon name="external-link" :size="13" />{{ repository }}
         </button>
         <button class="ghostbtn" @click="ui.modal = 'shortcuts'">
           <Icon name="info" :size="13" />快捷键与使用提示
@@ -66,7 +66,7 @@ function openRepository(): void {
       </div>
 
       <p class="about-note">
-        内置 Agent 的所有修改都经过 ChangeSet 校验；模型输出不会直接写入磁盘，保存与恢复由应用落账。
+        内置 Agent 的修改均由应用校验，并按你的审批设置处理。应用记录每次修改，支持恢复。
       </p>
 
       <div class="about-footer">

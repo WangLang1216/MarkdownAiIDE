@@ -46,7 +46,7 @@ export interface EditorFacade {
   /** 用给定纯文本替换当前选区。 */
   insertText(text: string): void
   /** 在选区前后包裹 Markdown 标记。 */
-  wrapSelection(kind: 'bold' | 'italic' | 'code' | 'strike' | 'underline'): void
+  wrapSelection(kind: 'bold' | 'italic' | 'code' | 'strike' | 'underline' | 'mark'): void
   /** 将当前选区转为 Markdown 链接。 */
   wrapLink(): void
   /** 移除选区中支持清理的行内格式标记。 */

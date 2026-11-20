@@ -55,6 +55,7 @@ interface RecoveryFile {
 /** 维护文稿会话、版本同步、保存冲突、图片资产和未保存草稿恢复。 */
 export class DocumentService {
   private sessions = new Map<string, DocumentSession>()
+  private openOrder = new Map<string, number>()
   private byPath = new Map<string, string>()
   private recoveryTimers = new Map<string, NodeJS.Timeout>()
 
@@ -113,8 +114,20 @@ export class DocumentService {
   listOpen(): DocumentSnapshot[] {
     return [...this.sessions.values()]
       .filter((session) => session.attached)
-      .sort((a, b) => a.openedAt - b.openedAt)
+      .sort((a, b) => {
+        const first = this.openOrder.get(a.documentId) ?? Number.MAX_SAFE_INTEGER
+        const second = this.openOrder.get(b.documentId) ?? Number.MAX_SAFE_INTEGER
+        return first - second || a.openedAt - b.openedAt
+      })
       .map((session) => session.snapshot())
+  }
+
+  reorderOpen(ids: string[]): void {
+    const open = this.listOpen().map((document) => document.documentId)
+    const known = new Set(open)
+    const order = new Set(ids.filter((id) => known.has(id)))
+    for (const id of open) order.add(id)
+    this.openOrder = new Map([...order].map((id, index) => [id, index]))
   }
 
   /** 让用户选择一个或多个 Markdown 文件并打开会话。 */

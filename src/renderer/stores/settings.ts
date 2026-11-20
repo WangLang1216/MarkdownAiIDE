@@ -10,7 +10,7 @@ import type { AppInfo, AppSettings, DocThemeInfo, PartialSettings, ThemeMode } f
 const DEFAULT_SETTINGS: AppSettings = {
   schemaVersion: 1,
   appearance: { themeMode: 'light' },
-  typography: { fontFamily: 'sans', fontSize: 14, lineHeight: 1.95, maxWidth: 740, docThemeId: 'default' },
+  typography: { fontFamily: 'sans', fontSize: 14, lineHeight: 2.05, maxWidth: 740, docThemeId: 'default' },
   editor: {
     autosave: true,
     autosaveDelayMs: 1200,
@@ -19,7 +19,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     loadRemoteImages: false,
     spellcheck: false
   },
-  agent: { autoApplyCurrentDocument: false, maxRounds: 12, temperature: 0.3 },
+  agent: { approvalMode: 'ask', maxRounds: 12, temperature: 0.3 },
   prediction: { enabled: true, auto: true, debounceMs: 800, maxPerMinute: 6, maxTokens: 120 },
   export: { includeTheme: true, includeSources: true, pageSize: 'A4', marginMm: 18 },
   storage: { assetsFolder: 'assets', cacheDir: '' },
@@ -97,13 +97,17 @@ export const useSettingsStore = defineStore('settings', () => {
     root.style.setProperty('--article-size', `${settings.value.typography.fontSize}px`)
     root.style.setProperty('--article-line', String(settings.value.typography.lineHeight))
     root.style.setProperty('--article-width', `${settings.value.typography.maxWidth}px`)
-    const font =
-      settings.value.typography.fontFamily === 'serif'
-        ? 'Georgia, "Times New Roman", "SimSun", serif'
-        : settings.value.typography.fontFamily === 'mono'
-          ? 'var(--mono-font)'
-          : '"Segoe UI", "Microsoft YaHei", system-ui, sans-serif'
-    root.style.setProperty('--article-font', font)
+    const fonts = {
+      sans: '"Segoe UI", "Microsoft YaHei", system-ui, sans-serif',
+      serif: 'Georgia, "Times New Roman", "SimSun", serif',
+      mono: 'var(--mono-font)',
+      yahei: '"Microsoft YaHei", "PingFang SC", sans-serif',
+      simsun: '"SimSun", "Songti SC", serif',
+      kaiti: '"KaiTi", "Kaiti SC", serif',
+      simhei: '"SimHei", "Heiti SC", sans-serif',
+      fangsong: '"FangSong", "STFangsong", serif'
+    }
+    root.style.setProperty('--article-font', fonts[settings.value.typography.fontFamily])
   }
 
   function initSystemTheme(): void {

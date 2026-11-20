@@ -28,7 +28,7 @@ import type { WorkspaceService } from '../workspace/service'
 import type { ReferenceService } from '../references/service'
 import type { DocumentService } from '../documents/service'
 import type { EditorBridge } from '../bridge'
-import { assessRisk, planOperation, type DocumentContext } from './engine'
+import { assessRisk, isLargeEdit, planOperation, type DocumentContext } from './engine'
 import { applyEditsToText, type TextEdit } from '@shared/markdown/edits'
 
 const MAX_DIFF_LINES = 600
@@ -221,7 +221,7 @@ export class ChangeService {
         const context: DocumentContext = {
           documentId: session.documentId,
           title: session.title,
-          revision: operation.guard.baseRevision,
+          revision: session.revision,
           text: session.text,
           contentHash: session.contentHash
         }
@@ -279,8 +279,10 @@ export class ChangeService {
     const autoApplicable =
       changeSet.risk === 'low' &&
       files.length === 1 &&
-      !issues.some((issue) => issue.severity === 'error') &&
-      !issues.some((issue) => issue.code === 'IMAGE_UNCERTAIN')
+      issues.length === 0 &&
+      [...groups.values()].every((group, index) =>
+        !isLargeEdit(group.before, group.edits, Math.max(files[index].additions, files[index].deletions))
+      )
 
     return { changeSet: { ...changeSet, issues }, files, autoApplicable }
   }
@@ -622,20 +624,22 @@ export class ChangeService {
   ): Promise<OperationResult> {
     const session = this.documents.getSession(operation.guard.documentId)
     await this.documents.syncForAgent(session.documentId)
-    if (session.contentHash !== operation.guard.expectedContentHash) {
+    if (session.revision !== operation.guard.baseRevision || session.contentHash !== operation.guard.expectedContentHash) {
       throw new AppError('REVISION_CONFLICT', '文档在删除前已被修改，请重新确认。')
+    }
+    const { relativePath, workspaceId } = session
+    if (!relativePath || !workspaceId || this.workspace.getCurrent()?.workspaceId !== workspaceId) {
+      throw new AppError('OUT_OF_SCOPE', '只能删除当前工作区内的文档。')
     }
     if (session.dirty) {
       if (!session.absPath) throw new AppError('SAVE_FAILED', '文档尚未保存，无法删除。')
       const saved = await this.documents.save(session.documentId, session.revision)
       if (saved.status !== 'saved') throw new AppError('SAVE_FAILED', '删除前保存失败，操作已中止。')
     }
-    if (!session.relativePath) throw new AppError('OUT_OF_SCOPE', '只能删除工作区内的文档。')
-    const relativePath = session.relativePath
     step.beforeHash = session.contentHash
     step.backupPath = await this.backupBefore(session.absPath, operation.operationId)
     step.relativePath = relativePath
-    await this.workspace.remove(relativePath)
+    await this.workspace.remove(relativePath, workspaceId)
     await this.documents.close(session.documentId)
     return {
       operationId: operation.operationId,

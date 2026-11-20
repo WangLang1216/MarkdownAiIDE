@@ -564,6 +564,7 @@ export type TaskEventPayload =
   | { type: 'started'; task: TaskSummary }
   | { type: 'phase'; phase: AgentPhase; label: string }
   | { type: 'text_delta'; text: string }
+  | { type: 'step_text'; text: string }
   | { type: 'message'; text: string }
   | { type: 'tool_started'; callId: string; name: string; title: string; argsSummary: string }
   | { type: 'tool_finished'; callId: string; name: string; ok: boolean; summary: string }
@@ -586,6 +587,7 @@ export interface TaskSnapshot {
   /** 当前记录承载的文本内容。 */
   text: string
   /** 当前任务已记录的工具调用进度及结果。 */
+  stepsText?: string
   toolLog: Array<{
     callId: string
     name: string
@@ -601,6 +603,8 @@ export interface TaskSnapshot {
   error: { code: ErrorCode; message: string; retryable: boolean } | null
 }
 
+export type AgentTaskScope = 'selection' | 'document' | 'workspace'
+
 /** 声明新任务的提示、编辑范围、模式及所选模型和参考材料。 */
 export interface StartTaskInput {
   /** 文稿会话标识；用于关联标签、编辑请求或历史记录。 */
@@ -608,7 +612,7 @@ export interface StartTaskInput {
   /** 用户发给任务的指令文本。 */
   prompt: string
   /** 作用范围，默认当前文档 */
-  scope: 'selection' | 'document' | 'workspace'
+  scope: AgentTaskScope | 'auto'
   /** 用于限定上下文或操作目标的当前源码选区。 */
   selection?: { from: number; to: number }
   /** 用于选择模型连接配置的标识。 */
@@ -714,8 +718,11 @@ export interface ConnectionResult {
 
 /** 定义应用配色的浅色、深色和跟随系统三种模式。 */
 export type ThemeMode = 'light' | 'dark' | 'system'
-/** 定义文稿可选的无衬线、衬线与等宽字体分类。 */
-export type DocFontFamily = 'sans' | 'serif' | 'mono'
+/** 决定 AI 文稿修改何时需要用户批准。 */
+export type AgentApprovalMode = 'ask' | 'assisted' | 'full_access'
+
+/** 定义文稿可用的字体选项。 */
+export type DocFontFamily = 'sans' | 'serif' | 'mono' | 'yahei' | 'simsun' | 'kaiti' | 'simhei' | 'fangsong'
 
 /** 定义可持久化的应用设置结构及最近使用状态。 */
 export interface AppSettings {
@@ -747,8 +754,8 @@ export interface AppSettings {
   }
   /** 显式任务的轮次、采样及自动应用偏好。 */
   agent: {
-    /** 允许符合服务端低风险条件的当前文稿提案自动应用。 */
-    autoApplyCurrentDocument: boolean
+    /** 决定何时需要用户批准应用修改提案。 */
+    approvalMode: AgentApprovalMode
     /** 限制一次显式 Agent 任务的轮次数。 */
     maxRounds: number
     /** 提供给模型用于控制生成随机性的采样参数。 */

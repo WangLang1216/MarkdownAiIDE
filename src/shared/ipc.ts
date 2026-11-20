@@ -69,6 +69,7 @@ export const IPC = {
     saveAs: 'documents:save-as',
     close: 'documents:close',
     listOpen: 'documents:list-open',
+    reorderOpen: 'documents:reorder-open',
     recent: 'documents:recent',
     resolveConflict: 'documents:resolve-conflict',
     recoveryList: 'documents:recovery-list',
@@ -109,7 +110,9 @@ export const IPC = {
     start: 'agent:start',
     cancel: 'agent:cancel',
     answer: 'agent:answer',
-    snapshot: 'agent:snapshot'
+    snapshot: 'agent:snapshot',
+    history: 'agent:history',
+    deleteHistory: 'agent:deleteHistory'
   },
   changes: {
     review: 'changes:review',
@@ -326,6 +329,7 @@ export interface DesktopAPI {
     saveAs(documentId: string): Promise<SaveResult | null>
     close(documentId: string): Promise<void>
     listOpen(): Promise<DocumentSnapshot[]>
+    reorderOpen(documentIds: string[]): Promise<void>
     recent(): Promise<RecentEntry[]>
     resolveConflict(
       documentId: string,
@@ -382,12 +386,14 @@ export interface DesktopAPI {
     cancel(taskId: string): Promise<void>
     answer(answer: ClarificationAnswer): Promise<void>
     snapshot(taskId: string): Promise<TaskSnapshot | null>
+    history(documentId: string | null, offset: number): Promise<TaskSnapshot[]>
+    deleteHistory(documentId: string | null, ids: string[] | null): Promise<void>
   }
   /** 变更提案审阅、应用、拒绝和事务恢复能力。 */
   changes: {
     review(changeSetId: string): Promise<ReviewData>
-    accept(changeSetId: string, proposalDigest: string): Promise<ApplyResult>
-    reject(changeSetId: string): Promise<void>
+    accept(changeSetId: string, proposalDigest: string, documentId?: string | null): Promise<ApplyResult>
+    reject(changeSetId: string, documentId?: string | null): Promise<void>
     restore(transactionId: string): Promise<RestoreResult>
     list(): Promise<ChangeSetRecord[]>
   }

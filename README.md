@@ -1,35 +1,38 @@
 # 小彭友 · Markdown AI IDE
 
-小彭友是一款本地优先的 Markdown 桌面编辑器。可以拖拽插入常用元素，也可以让 AI 润色、续写或整理文稿，在差异视图中审阅后应用。文稿以普通 `.md` 文件保存在磁盘，基础编辑无需账号。
+小彭友是一款开源、本地优先的 Markdown 桌面编辑器。拖入元素搭建文稿，用 AI 写作助手提问、润色和续写，并按需审阅 AI 修改。文稿以普通 `.md` 文件保存在磁盘，基础编辑无需账号。
 
 [下载 Windows 安装包](https://github.com/WangLang1216/MarkdownAiIDE/releases/latest) · [功能与实现文档](docs/README.md) · [提交问题](https://github.com/WangLang1216/MarkdownAiIDE/issues)
 
-## 界面截图
+## 元素交互
 
-**即时渲染、元素面板与写作助手**
+- **点选或拖放** · 从左侧元素面板将标题、任务清单、表格、图片和代码块插到正文。也可以输入 `/` 调出快捷插入菜单。
+- **复用内容模板** · 内置纪要、日报和提示词等内容模块。可把自己的 Markdown 或纯文本模板导入侧栏，下次直接插入。
+- **边写边看** · 在即时渲染、源码和分屏预览之间切换，共享同一份文稿与撤销历史。支持 KaTeX 公式、Mermaid 图表、脚注和文档目录。
 
-![本地 DEV 版的即时渲染界面](docs/screenshots/main.png)
+![本地 DEV 版的元素面板与内容模块](docs/screenshots/elements-v1.0.1.jpg)
 
-**Markdown 源码与实时预览分屏**
+## AI 写作助手
 
-![本地 DEV 版的源码与预览分屏](docs/screenshots/split.png)
+- **提问与编辑** · 让 AI 提炼摘要、润色或续写，也可以请它整理文稿。行内续写可用 `Tab` 接受、`Esc` 忽略。
+- **范围与审批** · 可为任务选择当前文档或工作区范围，并设置「请求批准」「帮我批准」或「完全访问」。在「请求批准」模式下，先看修改差异，再决定是否应用。
+- **参考材料与上下文** · 可添加图片、网页及 Markdown、PDF、DOCX、XLSX、PPTX 等文件作为参考。写作助手保留历史对话，便于回看与继续追问。
+- **切换模型** · 可选内置离线演示，或接入 DeepSeek、Ollama、LM Studio 等 OpenAI 兼容服务。模型菜单会显示服务名称、模型 ID 和当前选项。
 
-## 主要功能
+![本地 DEV 版的 AI 演示回复和模型切换菜单](docs/screenshots/ai-v1.0.1.png)
 
-- **三种编辑模式** · 在即时渲染、Markdown 源码和源码／预览分屏之间切换，共享文档和撤销历史。支持只读锁定与专注模式。
-- **拖拽插入与扩展语法** · 从元素面板拖入标题、表格、图片和任务列表。支持代码高亮、脚注、KaTeX 公式、Mermaid 图表和文档目录。
-- **可审阅的 AI 编辑** · 让写作助手润色、提炼摘要、续写或修改工作区文稿。可以先查看修改差异，再决定是否应用。行内续写候选可用 `Tab` 接受、`Esc` 忽略。
-- **模型与参考材料** · 接入 OpenAI 兼容服务，包括 Ollama 和 LM Studio。支持添加 Markdown、TXT、DOCX、PDF、图片及公开网页作为参考，图片读取取决于模型的视觉能力。
-- **本地工作区** · 使用文件树、标签页、文档大纲和全文搜索管理文稿。支持自动保存、恢复草稿和外部修改冲突提示。
-- **主题与导出** · 支持浅色和深色外观、文稿排版设置与 Typora CSS 导入。可导出 PDF、HTML、Markdown 单文件或带图片的 ZIP，安装 Pandoc 后可使用 DOCX、ODT、EPUB 等更多格式。
+## 工作区与导出
+
+使用标签页、文件树、全文搜索和大纲管理本地文稿。支持自动保存、草稿恢复、外部修改冲突提示、Typora CSS 主题导入，以及 PDF、HTML 和 Markdown 导出。安装 Pandoc 后可使用 DOCX、ODT、EPUB 等更多格式。
+
 
 ## 安装与启动
 
-1. 打开 [GitHub Releases](https://github.com/WangLang1216/MarkdownAiIDE/releases/latest)，下载 Windows x64 的 `MarkdownAiIDE-1.0.0-x64-Setup.exe`。
+1. 打开 [GitHub Releases](https://github.com/WangLang1216/MarkdownAiIDE/releases/latest)，下载 Windows x64 的 `MarkdownAiIDE-1.0.1-x64-Setup.exe`。
 2. 运行安装程序，按向导选择安装目录。
 3. 从开始菜单或桌面快捷方式打开「小彭友」。通过「文件」打开 Markdown 文稿或工作区，也可以将 Markdown 文件拖到标签栏。
 
-v1.0.0 提供未签名的 Windows x64 安装包。发布页也提供源码 ZIP 和 SHA-256 校验文件。
+v1.0.1 提供未签名的 Windows x64 安装包。发布页也提供源码 ZIP 和 SHA-256 校验文件。
 
 ### 体验写作助手
 

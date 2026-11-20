@@ -4,11 +4,13 @@
  * 面板占据布局空间，不覆盖正文。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { ReferenceRole } from '@shared/types'
+import type { AgentApprovalMode, ReferenceRole } from '@shared/types'
+import { resolveAgentScope } from '@shared/agentScope'
 import { useAgentStore } from '../stores/agent'
 import { useDocumentsStore } from '../stores/documents'
 import { useSettingsStore } from '../stores/settings'
 import { useUiStore } from '../stores/ui'
+import { useWorkspaceStore } from '../stores/workspace'
 import { editorApi } from '../lib/editorApi'
 import Icon from '../components/Icon.vue'
 
@@ -16,12 +18,132 @@ const agent = useAgentStore()
 const documents = useDocumentsStore()
 const settings = useSettingsStore()
 const ui = useUiStore()
+const workspace = useWorkspaceStore()
+
+const updatingApproval = ref(false)
+const approvalOpen = ref(false)
+const approvalTrigger = ref<HTMLButtonElement | null>(null)
+const approvalMenu = ref<HTMLElement | null>(null)
+const providerOpen = ref(false)
+const providerTrigger = ref<HTMLButtonElement | null>(null)
+const providerMenu = ref<HTMLElement | null>(null)
+const approvalMode = computed(() => settings.settings.agent.approvalMode)
+const automaticScope = computed(() => resolveAgentScope('auto', approvalMode.value, Boolean(workspace.info)))
+const approvalOptions: Record<AgentApprovalMode, { label: string; description: string; icon: string }> = {
+  ask: { label: '请求批准', description: '每次修改都需你批准', icon: 'lock' },
+  assisted: { label: '帮我批准', description: '可处理工作区任务，重要或大幅修改需你批准', icon: 'shield' },
+  full_access: { label: '完全访问', description: '自动应用通过校验的工作区修改', icon: 'unlock' }
+}
+
+async function toggleApproval(): Promise<void> {
+  if (!settings.loaded || updatingApproval.value) return
+  if (approvalOpen.value) {
+    approvalOpen.value = false
+    return
+  }
+  closePopups()
+  approvalOpen.value = true
+  await nextTick()
+  approvalMenu.value?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus()
+}
+
+function onMenuKeydown(event: KeyboardEvent, close: () => void): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    close()
+    return
+  }
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  const items = Array.from((event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'))
+  const index = items.indexOf(document.activeElement as HTMLButtonElement)
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+    : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+  items[next]?.focus()
+}
+
+function closeApprovalMenu(): void {
+  approvalOpen.value = false
+  approvalTrigger.value?.focus()
+}
+
+async function toggleProvider(): Promise<void> {
+  if (!agent.providers.length) return
+  if (providerOpen.value) {
+    closeProviderMenu()
+    return
+  }
+  closePopups()
+  providerOpen.value = true
+  await nextTick()
+  const menu = providerMenu.value
+  const option = menu?.querySelector<HTMLElement>('[aria-checked="true"]')
+    ?? menu?.querySelector<HTMLElement>('[role="menuitemradio"]')
+  option?.focus()
+}
+
+function closeProviderMenu(): void {
+  providerOpen.value = false
+  providerTrigger.value?.focus()
+}
+
+function changeProvider(providerId: string): void {
+  agent.setProvider(providerId)
+  closeProviderMenu()
+}
+
+function onProviderFocusOut(event: FocusEvent): void {
+  if ((event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) return
+  providerOpen.value = false
+}
+
+function onApprovalFocusOut(event: FocusEvent): void {
+  if ((event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) return
+  approvalOpen.value = false
+}
+
+async function changeApproval(mode: AgentApprovalMode): Promise<void> {
+  approvalOpen.value = false
+  approvalTrigger.value?.focus()
+  if (mode === approvalMode.value) return
+  updatingApproval.value = true
+  try {
+    await settings.update({ agent: { approvalMode: mode } })
+  } catch (error) {
+    ui.toast((error as Error).message || '审批模式保存失败', 'error')
+  } finally {
+    updatingApproval.value = false
+  }
+}
 
 const attachOpen = ref(false)
 const urlOpen = ref(false)
 const urlValue = ref('')
 const answerText = ref('')
 const scrollArea = ref<HTMLElement | null>(null)
+const selectedHistory = ref<string[]>([])
+const clearingHistory = ref(false)
+const olderTurns = computed(() => agent.history.filter((entry) => entry.task.taskId !== agent.task.taskId).reverse())
+const canDeleteHistory = computed(() => !agent.historyLoading && agent.history.some(
+  (entry) => entry.task.taskId !== agent.task.taskId || !running.value
+))
+
+async function removeHistory(ids: string[] | null): Promise<void> {
+  await agent.deleteHistory(ids)
+  selectedHistory.value = []
+  clearingHistory.value = false
+}
+
+async function loadOlder(): Promise<void> {
+  const element = scrollArea.value
+  if (!element) return
+  const height = element.scrollHeight
+  const top = element.scrollTop
+  await agent.loadHistory(true)
+  await nextTick()
+  if (scrollArea.value === element) element.scrollTop = top + element.scrollHeight - height
+}
 
 const hasSelection = computed(() => ui.selectionFrom !== ui.selectionTo)
 const contextTitle = computed(() => documents.activeTab?.snapshot.title ?? '工作区')
@@ -64,8 +186,9 @@ watch(
 )
 
 function toggleAttach(): void {
-  attachOpen.value = !attachOpen.value
-  urlOpen.value = false
+  const next = !attachOpen.value
+  closePopups()
+  attachOpen.value = next
 }
 
 /* ------------------------- 拖入与粘贴文件 ------------------------- */
@@ -106,13 +229,17 @@ function onDragLeave(event: DragEvent): void {
 
 /** 图片作为视觉附件，文档作为参考材料；单个文件失败不影响其余文件 */
 async function ingestFiles(files: File[]): Promise<void> {
+  const key = agent.currentKey
+  if (files.length > 6) ui.toast('一次最多添加 6 个文件，已处理前 6 个。', 'warning')
   for (const file of files.slice(0, 6)) {
     try {
+      if (file.size > 15 * 1024 * 1024) throw new Error('文件超过 15MB 限制。')
       const buffer = await file.arrayBuffer()
-      if (file.type.startsWith('image/')) {
-        await agent.addAttachmentBytes(file.name || '粘贴的图片.png', file.type, buffer)
+      if (/^image\/(png|jpeg|gif|webp)$/.test(file.type) || /\.(png|jpe?g|gif|webp)$/i.test(file.name)) {
+        await agent.addAttachmentBytes(file.name || '粘贴的图片.png', file.type, buffer, key)
       } else {
-        await agent.addReferenceBytes(file.name || '参考文件', buffer)
+        const source = await agent.addReferenceBytes(file.name || '参考文件', buffer, key)
+        if (source.status === 'partial' && source.message) ui.toast(file.name + '：' + source.message, 'warning', 5000)
       }
     } catch (error) {
       ui.toast(`${file.name || '文件'} 添加失败：${(error as Error).message}`, 'error', 4200)
@@ -196,6 +323,7 @@ function send(): void {
     void agent.cancel()
     return
   }
+  if (updatingApproval.value) return
   if (!agent.prompt.trim()) {
     ui.toast('先写下一点想法，或选择一个快捷指令', 'warning')
     return
@@ -234,10 +362,7 @@ function openReview(): void {
 
 async function rejectProposal(): Promise<void> {
   if (!agent.task.proposalId) return
-  await window.api.changes.reject(agent.task.proposalId)
-  ui.toast('已放弃本次建议', 'info')
-  agent.task.status = 'cancelled'
-  agent.task.phaseLabel = '已放弃'
+  await agent.rejectProposal(agent.task.proposalId)
 }
 
 function undoApplied(): void {
@@ -269,6 +394,8 @@ async function removePreviewSource(): Promise<void> {
 }
 
 function closePopups(): void {
+  providerOpen.value = false
+  approvalOpen.value = false
   attachOpen.value = false
   urlOpen.value = false
 }
@@ -279,10 +406,21 @@ onBeforeUnmount(() => document.removeEventListener('click', closePopups))
 watch(
   () => [agent.task.text, agent.task.tools.length, agent.task.clarification, agent.task.status],
   async () => {
+    const element = scrollArea.value
+    if (element && element.scrollHeight - element.clientHeight - element.scrollTop > 70) return
     await nextTick()
     if (scrollArea.value) scrollArea.value.scrollTop = scrollArea.value.scrollHeight
   }
 )
+watch(() => agent.currentKey, () => {
+  answerText.value = ''
+  selectedHistory.value = []
+  clearingHistory.value = false
+})
+watch(() => agent.history[0]?.task.taskId, async () => {
+  await nextTick()
+  if (scrollArea.value) scrollArea.value.scrollTop = scrollArea.value.scrollHeight
+})
 </script>
 
 <template>
@@ -322,24 +460,66 @@ watch(
           <Icon name="file" :size="11" />
           <span>{{ contextTitle }}</span>
           <select v-model="agent.scope" aria-label="AI 作用范围">
+            <option value="auto">{{ automaticScope === 'workspace' ? '工作区（自动）' : '仅此文档（自动）' }}</option>
             <option value="document">仅此文档</option>
             <option value="selection" :disabled="!hasSelection">选中部分</option>
-            <option value="workspace">工作区</option>
+            <option value="workspace" :disabled="!workspace.info">工作区</option>
           </select>
         </span>
         <span class="ai-privacy"><Icon name="shield" :size="11" />内容由你掌控</span>
       </div>
 
-      <div v-if="hasTask" ref="scrollArea" class="ai-scroll">
-        <div class="task-panel">
+      <div v-if="canDeleteHistory || clearingHistory" class="history-actions">
+        <button class="textbtn" :disabled="!selectedHistory.length" @click="removeHistory(selectedHistory)">
+          删除所选{{ selectedHistory.length ? '（' + selectedHistory.length + '）' : '' }}
+        </button>
+        <button v-if="!clearingHistory" class="textbtn" @click="clearingHistory = true">清空对话</button>
+        <template v-else>
+          <button class="textbtn" @click="removeHistory(null)">确认清空</button>
+          <button class="textbtn" @click="clearingHistory = false">取消</button>
+        </template>
+      </div>
+      <div v-if="hasTask || agent.history.length || agent.historyLoading" ref="scrollArea" class="ai-scroll">
+        <button v-if="agent.historyHasMore" class="textbtn" :disabled="agent.historyLoading" @click="loadOlder">
+          加载更早的对话
+        </button>
+        <article v-for="entry in olderTurns" :key="entry.task.taskId" class="task-panel history-turn">
+          <div class="task-head">
+            <label><input v-model="selectedHistory" type="checkbox" :value="entry.task.taskId" />选择此轮</label>
+            <time class="time">{{ new Date(entry.task.createdAt).toLocaleString() }}</time>
+            <button class="textbtn" @click="removeHistory([entry.task.taskId])">删除</button>
+          </div>
+          <p class="conversation-prompt">{{ entry.task.prompt }}</p>
+          <div v-if="entry.text" class="task-text">{{ entry.text }}</div>
+          <div v-if="entry.error" class="task-error">{{ entry.error.message }}</div>
+          <button v-if="entry.task.status === 'reviewing' && entry.proposalId" class="textbtn"
+            @click="agent.openReview(entry.proposalId)">查看差异</button>
+          <details v-if="entry.stepsText || entry.toolLog.length" class="task-process">
+            <summary>执行过程</summary>
+            <p v-if="entry.stepsText" class="task-text">{{ entry.stepsText }}</p>
+            <div v-for="tool in entry.toolLog" :key="tool.callId" class="history-step">
+              {{ tool.title }} · {{ tool.summary }}
+            </div>
+          </details>
+        </article>
+        <div v-if="hasTask" class="task-panel">
           <div class="task-head">
             <span class="green-dot" />
             <span>{{ agent.task.documentTitle || '工作区' }}</span>
             <span class="time">{{ agent.task.phaseLabel || '处理中' }}</span>
-            <button v-if="!running" class="textbtn clear-task" @click="agent.resetTask()">清空</button>
+            <template v-if="agent.task.taskId && !running &&
+              agent.history.some((entry) => entry.task.taskId === agent.task.taskId)">
+              <label><input v-model="selectedHistory" type="checkbox" :value="agent.task.taskId" />选择此轮</label>
+              <button class="textbtn clear-task" @click="removeHistory([agent.task.taskId])">删除</button>
+            </template>
           </div>
 
-          <div v-if="agent.task.tools.length" class="tool-log">
+          <p v-if="!running" class="conversation-prompt">{{ agent.task.prompt }}</p>
+          <details v-if="agent.task.tools.length || agent.task.stepsText" :key="agent.task.taskId + String(running)"
+            :open="running" class="task-process">
+            <summary>执行过程</summary>
+            <p v-if="agent.task.stepsText" class="task-text">{{ agent.task.stepsText }}</p>
+            <div v-if="agent.task.tools.length" class="tool-log">
             <div v-for="tool in agent.task.tools" :key="tool.callId" class="tool-row">
               <Icon
                 :name="tool.status === 'running' ? 'loader' : tool.status === 'failed' ? 'warning' : 'check'"
@@ -352,7 +532,8 @@ watch(
                 tool.status === 'running' ? '进行中' : tool.status === 'failed' ? '失败' : '完成'
               }}</span>
             </div>
-          </div>
+            </div>
+          </details>
 
           <div v-if="agent.task.text" class="task-text">{{ agent.task.text }}</div>
 
@@ -392,9 +573,9 @@ watch(
           <div v-if="agent.task.applied" class="task-result">
             <span class="title">{{ agent.task.applied.message }}</span>
             <span class="meta"
-              >状态：{{ agent.task.applied.status === 'applied' ? '已应用' : '部分应用' }}</span
+              >状态：{{ agent.task.phaseLabel }}</span
             >
-            <div class="task-actions">
+            <div v-if="agent.task.status === 'applied'" class="task-actions">
               <button class="ghostbtn" @click="undoApplied">撤销编辑</button>
               <button v-if="agent.task.applied.transactionId" class="ghostbtn" @click="restoreApplied">
                 恢复快照
@@ -456,7 +637,9 @@ watch(
       </div>
 
       <textarea
-        v-model="agent.prompt"
+        :value="running ? agent.task.prompt : agent.prompt"
+        :readonly="running"
+        @input="agent.prompt = ($event.target as HTMLTextAreaElement).value"
         class="ai-input"
         :placeholder="'让 AI 帮你整理思路、润色文字，或从这里开始写作…'"
         aria-label="向 AI 提问"
@@ -472,28 +655,108 @@ watch(
         >
           <Icon name="plus" :size="15" />
         </button>
-        <div class="provider-control">
-          <span class="online-dot" :class="{ off: !providerReady }" />
-          <select
-            v-model="agent.selectedProviderId"
-            aria-label="模型来源"
-            @change="agent.setProvider(agent.selectedProviderId)"
+        <div class="approval-control" @focusout="onApprovalFocusOut" @click.stop>
+          <button
+            id="agent-approval"
+            ref="approvalTrigger"
+            type="button"
+            class="picker-trigger"
+            :class="{ 'full-access': approvalMode === 'full_access' }"
+            :aria-label="'AI 审批权限，当前为' + approvalOptions[approvalMode].label"
+            aria-haspopup="menu"
+            :aria-expanded="approvalOpen"
+            :aria-controls="approvalOpen ? 'agent-approval-menu' : undefined"
+            :aria-disabled="updatingApproval || !settings.loaded"
+            @click="toggleApproval"
+            @keydown.down.prevent="!approvalOpen && toggleApproval()"
+            @keydown.esc="approvalOpen && onMenuKeydown($event, closeApprovalMenu)"
           >
-            <option v-if="!agent.providers.length" value="">未配置模型</option>
-            <option
-              v-for="provider in agent.providers"
-              :key="provider.providerId"
-              :value="provider.providerId"
+            {{ approvalOptions[approvalMode].label }}
+            <Icon name="chevron-down" :size="10" />
+          </button>
+          <div
+            v-if="approvalOpen"
+            id="agent-approval-menu"
+            ref="approvalMenu"
+            class="picker-menu"
+            role="menu"
+            aria-label="AI 审批权限"
+            @keydown="onMenuKeydown($event, closeApprovalMenu)"
+          >
+            <div class="picker-heading" aria-hidden="true">AI 审批权限</div>
+            <button
+              v-for="(option, mode) in approvalOptions"
+              :key="mode"
+              type="button"
+              role="menuitemradio"
+              :aria-checked="approvalMode === mode"
+              :class="{ 'full-access': mode === 'full_access' }"
+              tabindex="-1"
+              @click="changeApproval(mode)"
             >
-              {{ provider.name }} · {{ provider.model }}
-            </option>
-          </select>
-          <Icon name="chevron-down" :size="10" />
+              <Icon :name="option.icon" :size="15" />
+              <span class="picker-option-text">
+                <span>{{ option.label }}</span>
+                <small>{{ option.description }}</small>
+              </span>
+              <Icon v-if="approvalMode === mode" name="check" :size="14" />
+            </button>
+          </div>
         </div>
         <span class="ai-shortcut">Enter 发送 · Shift Enter 换行</span>
+        <div class="provider-control" @focusout="onProviderFocusOut" @click.stop>
+          <button
+            ref="providerTrigger"
+            type="button"
+            class="picker-trigger provider-trigger"
+            aria-label="切换模型"
+            aria-haspopup="menu"
+            :aria-expanded="providerOpen"
+            :aria-controls="providerOpen ? 'agent-provider-menu' : undefined"
+            :disabled="!agent.providers.length"
+            @click="toggleProvider"
+            @keydown.down.prevent="!providerOpen && toggleProvider()"
+            @keydown.esc="providerOpen && onMenuKeydown($event, closeProviderMenu)"
+          >
+            <span class="online-dot" :class="{ off: !providerReady }" />
+            <span class="provider-label" v-if="agent.selectedProvider">
+              {{ agent.selectedProvider.name }} · {{ agent.selectedProvider.model }}
+            </span>
+            <span class="provider-label" v-else>未配置模型</span>
+            <Icon name="chevron-down" :size="10" />
+          </button>
+          <div
+            v-if="providerOpen"
+            id="agent-provider-menu"
+            ref="providerMenu"
+            class="picker-menu provider-menu"
+            role="menu"
+            aria-label="切换模型"
+            @keydown="onMenuKeydown($event, closeProviderMenu)"
+          >
+            <div class="picker-heading" aria-hidden="true">切换模型</div>
+            <button
+              v-for="provider in agent.providers"
+              :key="provider.providerId"
+              type="button"
+              role="menuitemradio"
+              :aria-checked="agent.selectedProvider?.providerId === provider.providerId"
+              tabindex="-1"
+              @click="changeProvider(provider.providerId)"
+            >
+              <Icon name="sparkles" :size="15" />
+              <span class="picker-option-text provider-option-text">
+                <span>{{ provider.name }}</span>
+                <small>{{ provider.model }}</small>
+              </span>
+              <Icon v-if="agent.selectedProvider?.providerId === provider.providerId" name="check" :size="14" />
+            </button>
+          </div>
+        </div>
         <button
           class="send-btn"
           :class="{ stop: running }"
+          :disabled="updatingApproval && !running"
           :title="running ? '停止任务' : '发送'"
           :aria-label="running ? '停止任务' : '发送'"
           @click="send"
@@ -591,6 +854,151 @@ watch(
 </template>
 
 <style scoped>
+.approval-control {
+  position: relative;
+  flex: none;
+  --full-access-text: #a14e24;
+}
+
+:global(:root[data-theme='dark'] .approval-control) {
+  --full-access-text: #efab7f;
+}
+
+.picker-trigger {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 25px;
+  padding: 0 8px;
+  border-radius: 14px;
+  background: var(--side);
+  color: var(--soft);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.picker-trigger:hover,
+.picker-trigger[aria-expanded='true'] {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.picker-trigger[aria-disabled='true'] {
+  opacity: 0.65;
+}
+
+.picker-menu {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 0;
+  z-index: 31;
+  width: min(276px, calc(100vw - 100px));
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--card);
+  box-shadow: var(--shadow-strong);
+}
+
+.picker-heading {
+  padding: 6px 9px;
+  color: var(--soft);
+  font-size: 10px;
+}
+
+.picker-menu button {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 14px;
+  gap: 8px;
+  align-items: start;
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+}
+
+.picker-menu button[aria-checked='true'] {
+  background: var(--selection);
+}
+
+.picker-menu button:hover,
+.picker-menu button:focus-visible {
+  background: var(--hover);
+}
+
+.picker-trigger.full-access,
+.picker-menu .full-access {
+  color: var(--full-access-text);
+}
+
+.picker-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.picker-option-text small {
+  color: var(--soft);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.provider-control {
+  position: relative;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.provider-trigger {
+  max-width: 100%;
+}
+
+.provider-trigger svg {
+  flex-shrink: 0;
+}
+
+.provider-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.provider-menu {
+  right: 0;
+  left: auto;
+  max-height: min(260px, 55vh);
+  overflow-y: auto;
+}
+
+.provider-option-text {
+  overflow-wrap: anywhere;
+}
+
+.history-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.history-turn {
+  margin-bottom: 10px;
+}
+.conversation-prompt {
+  font-weight: 600;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.task-process {
+  font-size: 11px;
+  color: var(--muted);
+}
+.task-process summary {
+  cursor: pointer;
+}
+.history-step {
+  margin: 4px 0;
+}
+
 .chips {
   display: flex;
   gap: 5px;

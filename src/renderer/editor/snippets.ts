@@ -3,6 +3,8 @@
  * 标题类片段插入后直接选中占位文字，输入即可替换，退格可一键清除。
  */
 
+import { shallowRef } from 'vue'
+
 export interface SnippetDefinition {
   /** 用于搜索和定位要插入的模板的标识。 */
   id: string
@@ -56,6 +58,42 @@ export const ELEMENT_SNIPPETS: SnippetDefinition[] = [
 
 /** 列出由多个 Markdown 元素构成的常用文稿模板。 */
 export const MODULE_SNIPPETS: SnippetDefinition[] = [
+  {
+    id: 'prompt-template',
+    label: '提示词模板',
+    description: '目标、上下文和输出要求',
+    markdown: '## 目标\n\n## 上下文\n\n## 约束与要求\n\n## 输出格式\n\n## 验收标准'
+  },
+  {
+    id: 'text-to-image-template',
+    label: '文生图模板',
+    description: '主体、构图与画面风格',
+    markdown: '## 文生图\n\n- 主体与动作：\n- 场景与背景：\n- 画面风格：\n- 镜头、光线与色彩：\n- 比例和尺寸：\n- 需要避开的元素：'
+  },
+  {
+    id: 'image-to-text-template',
+    label: '图生文模板',
+    description: '描述、转录与待确认项',
+    markdown: '## 图生文\n\n- 图片来源：\n- 输出任务：描述、转录或提取数据\n- 关注区域：\n- 输出格式：\n- 模糊内容：标记为待确认'
+  },
+  {
+    id: 'meeting-template',
+    label: '纪要',
+    description: '议题、结论和行动项',
+    markdown: '## 会议纪要\n\n- 日期：\n- 参会人：\n\n### 议题与讨论\n\n### 结论\n\n### 行动项\n\n| 事项 | 负责人 | 截止日期 |\n| --- | --- | --- |\n|  |  |  |'
+  },
+  {
+    id: 'daily-template',
+    label: '日报',
+    description: '今日进展和明日计划',
+    markdown: '## 日报\n\n- 日期：\n\n### 今日完成\n\n### 问题与协助\n\n### 明日计划'
+  },
+  {
+    id: 'weekly-template',
+    label: '周报',
+    description: '本周成果和下周计划',
+    markdown: '## 周报\n\n- 周期：\n\n### 本周成果\n\n### 风险与待办\n\n### 下周计划'
+  },
   {
     id: 'callout',
     label: '提示块',
@@ -173,7 +211,27 @@ export const EXTENDED_SNIPPETS: SnippetDefinition[] = [
 /** 合并元素与模块模板，供搜索及按标识查找。 */
 export const ALL_SNIPPETS = [...ELEMENT_SNIPPETS, ...EXTENDED_SNIPPETS, ...MODULE_SNIPPETS]
 
+const templateKey = 'moye.contentTemplates'
+export const importedTemplates = shallowRef<SnippetDefinition[]>([])
+
+try {
+  const data: unknown = JSON.parse(localStorage.getItem(templateKey) ?? '[]')
+  if (Array.isArray(data)) {
+    importedTemplates.value = data.filter((item) => item && typeof item.id === 'string' &&
+      item.id.startsWith('imported-') && typeof item.label === 'string' && typeof item.markdown === 'string')
+  }
+} catch {
+  // 无法读取已导入模板时保留内置模板。
+}
+
+export function importContentTemplate(label: string, markdown: string): void {
+  const template = { id: 'imported-' + crypto.randomUUID(), label, markdown, description: '已导入' }
+  const next = [...importedTemplates.value, template]
+  localStorage.setItem(templateKey, JSON.stringify(next))
+  importedTemplates.value = next
+}
+
 /** 按稳定标识查找可插入模板，不存在时返回空结果。 */
 export function snippetById(id: string): SnippetDefinition | undefined {
-  return ALL_SNIPPETS.find((snippet) => snippet.id === id)
+  return ALL_SNIPPETS.find((snippet) => snippet.id === id) ?? importedTemplates.value.find((snippet) => snippet.id === id)
 }

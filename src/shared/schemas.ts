@@ -122,7 +122,7 @@ export const PredictionRequestSchema = z.object({
 export const StartTaskSchema = z.object({
   documentId: z.string().nullable(),
   prompt: z.string().min(1).max(20_000),
-  scope: z.enum(['selection', 'document', 'workspace']),
+  scope: z.enum(['auto', 'selection', 'document', 'workspace']),
   selection: z
     .object({ from: z.number().int().nonnegative(), to: z.number().int().nonnegative() })
     .optional(),
