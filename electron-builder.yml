@@ -1,0 +1,60 @@
+appId: cn.moye.markdownide
+productName: 小彭友
+copyright: Copyright © 2026 MoYe Contributors
+
+directories:
+  output: dist
+  buildResources: resources
+
+files:
+  - out/**/*
+  - node_modules/**/*
+  - package.json
+  - resources/icon.png
+  - '!**/*.map'
+  - '!**/*.ts'
+
+asar: true
+asarUnpack:
+  - node_modules/pdfjs-dist/**/*
+
+win:
+  icon: resources/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: 小彭友-MarkdownAiIDE-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  shortcutName: 小彭友
+
+mac:
+  icon: resources/icon.png
+  category: public.app-category.productivity
+  target:
+    - dmg
+
+linux:
+  icon: resources/icon.png
+  category: Office
+  target:
+    - AppImage
+
+fileAssociations:
+  - ext: md
+    name: Markdown 文档
+    description: Markdown 文档
+    role: Editor
+  - ext: markdown
+    name: Markdown 文档
+    description: Markdown 文档
+    role: Editor
+  - ext: txt
+    name: 纯文本
+    description: 纯文本文档
+    role: Editor

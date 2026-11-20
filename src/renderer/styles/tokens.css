@@ -1,0 +1,59 @@
+/* 设计 Token：应用外观与文稿排版分离，应用主题不污染文稿主题 */
+:root {
+  --page: #ffffff;
+  --side: #f8f8f7;
+  --chrome: #f3f3f2;
+  --text: #282b2f;
+  --muted: #929497;
+  --soft: #64686e;
+  --line: #e9e9e7;
+  --hover: #eeeeec;
+  --accent: #397965;
+  --accent-strong: #2f6a57;
+  --selection: #e9efeb;
+  --card: #ffffff;
+  --code: #f5f6f5;
+  --shadow: 0 5px 24px rgba(34, 34, 34, 0.03);
+  --shadow-strong: 0 24px 100px rgba(0, 0, 0, 0.12);
+
+  --left: 244px;
+  --right: 238px;
+
+  --ui-font: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --mono-font: 'Cascadia Mono', Consolas, 'Microsoft YaHei', monospace;
+  --article-font: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --article-size: 14px;
+  --article-line: 1.95;
+  --article-width: 740px;
+
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 17px;
+  --topbar-height: 52px;
+}
+
+:root[data-theme='dark'] {
+  --page: #202321;
+  --side: #252825;
+  --chrome: #292c29;
+  --text: #d4dad3;
+  --muted: #7c887d;
+  --soft: #a2aca0;
+  --line: #363d35;
+  --hover: #353e34;
+  --accent: #a2c2aa;
+  --accent-strong: #b9d6bf;
+  --selection: #364737;
+  --card: #2a3029;
+  --code: #2b322a;
+  --shadow: 0 5px 24px rgba(0, 0, 0, 0.18);
+  --shadow-strong: 0 24px 100px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-doc-font='serif'] {
+  --article-font: Georgia, 'Times New Roman', 'SimSun', serif;
+}
+
+:root[data-doc-font='mono'] {
+  --article-font: var(--mono-font);
+}
