@@ -62,7 +62,7 @@ export interface EditorFacade {
   /** 将键盘焦点交给当前编辑器视图。 */
   focus(): void
   /** 滚动到指定源码范围并在编辑器中定位。 */
-  revealOffset(offset: number): void
+  revealOffset(offset: number, sectionEnd?: number): void
   /** 更新查找词、替换词及查找选项。 */
   setSearch(query: string, caseSensitive: boolean, replacement: string): void
   /** 按指定方向跳转到下一个查找匹配项。 */

@@ -9,6 +9,7 @@ import { useDocumentsStore } from './stores/documents'
 import { useWorkspaceStore } from './stores/workspace'
 import { useAgentStore } from './stores/agent'
 import { useUiStore } from './stores/ui'
+import { useUpdatesStore } from './stores/updates'
 import { editorApi } from './lib/editorApi'
 import { closeTabWithConfirm, newDocument, openDocument, saveActive, saveAsActive } from './lib/actions'
 import TopBar from './shell/TopBar.vue'
@@ -25,6 +26,7 @@ import ClosePrompt from './shell/ClosePrompt.vue'
 import ReviewDialog from './shell/ReviewDialog.vue'
 import ConfirmDialog from './shell/ConfirmDialog.vue'
 import ToastHost from './shell/ToastHost.vue'
+import UpdateModal from './shell/UpdateModal.vue'
 import Icon from './components/Icon.vue'
 
 const settings = useSettingsStore()
@@ -32,6 +34,7 @@ const documents = useDocumentsStore()
 const workspace = useWorkspaceStore()
 const agent = useAgentStore()
 const ui = useUiStore()
+const updates = useUpdatesStore()
 
 const ready = ref(false)
 const unsubscribers: Array<() => void> = []
@@ -54,6 +57,7 @@ watch(
 /** 将桌面进程广播分发给相应状态库，并登记取消订阅回调。 */
 function subscribe(): void {
   unsubscribers.push(
+    window.api.on.updateChanged((state) => { updates.state = state }),
     window.api.on.agentEvent((event) => agent.handleEvent(event)),
     window.api.on.documentChanged((event) => documents.applySnapshot(event.snapshot, event.origin)),
     window.api.on.documentConflict((event) => documents.setConflict(event.conflict)),
@@ -142,6 +146,7 @@ onMounted(async () => {
     await settings.load()
     await Promise.all([agent.hydrate(), workspace.load(), documents.hydrate()])
     subscribe()
+    void window.api.update.state().then((state) => { updates.state = state }).catch(() => undefined)
     window.addEventListener('keydown', onKeydown)
     ready.value = true
     document.addEventListener('dragover', (event) => event.preventDefault())
@@ -196,6 +201,7 @@ onBeforeUnmount(() => {
     <ProviderModal v-if="ui.modal === 'providers'" />
     <ShortcutsModal v-if="ui.modal === 'shortcuts'" />
     <AboutModal v-if="ui.modal === 'about'" />
+    <UpdateModal v-if="ui.modal === 'update'" />
     <ImagePreview />
     <ClosePrompt />
     <ReviewDialog />

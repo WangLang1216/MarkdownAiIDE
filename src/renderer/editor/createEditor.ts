@@ -3,7 +3,7 @@
  * 文档文本是唯一事实来源，实时渲染只是装饰层。
  */
 
-import { Compartment, EditorState, type Extension } from '@codemirror/state'
+import { Compartment, EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
 import {
   Decoration,
   EditorView,
@@ -12,6 +12,8 @@ import {
   keymap,
   lineNumbers,
   placeholder,
+  scrollPastEnd,
+  type DecorationSet,
   type ViewUpdate
 } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab, redo, undo } from '@codemirror/commands'
@@ -83,6 +85,32 @@ const editorTheme = EditorView.theme({
   '.cm-gutters': { backgroundColor: 'var(--page)', color: 'var(--muted)', border: 'none' }
 })
 
+const flashSection = StateEffect.define<{ from: number; to: number } | null>()
+const sectionFlash = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, transaction) {
+    if (transaction.docChanged) value = Decoration.none
+    for (const effect of transaction.effects) {
+      if (!effect.is(flashSection)) continue
+      const range = effect.value
+      if (!range) {
+        value = Decoration.none
+        continue
+      }
+      const doc = transaction.state.doc
+      const first = doc.lineAt(range.from).number
+      const last = doc.lineAt(Math.max(range.from, range.to - 1)).number
+      const lines = []
+      for (let number = first; number <= last; number++) {
+        lines.push(Decoration.line({ class: 'cm-outline-flash' }).range(doc.line(number).from))
+      }
+      value = Decoration.set(lines)
+    }
+    return value
+  },
+  provide: (field) => EditorView.decorations.from(field)
+})
+
 function endHeading(view: EditorView): boolean {
   const { state } = view
   if (view.composing || state.readOnly || state.selection.ranges.length !== 1) return false
@@ -101,7 +129,8 @@ function typewriterExtension(): Extension {
     class {
       constructor(readonly view: EditorView) {}
       update(update: ViewUpdate): void {
-        if (!update.selectionSet) return
+        if (!update.selectionSet || update.transactions.some((transaction) =>
+          transaction.effects.some((effect) => effect.is(flashSection)))) return
         const head = update.state.selection.main.head
         window.requestAnimationFrame(() => {
           if (!this.view.dom.isConnected) return
@@ -136,6 +165,7 @@ export class EditorController implements EditorFacade {
   /** 锁定期间临时摘下的 CodeMirror 选区观察器，避免它把原生选区改写回光标 */
   private selectionObserver: ((event: Event) => void) | null = null
   private suppressChange = false
+  private outlineTimer = 0
 
   /** 创建 CodeMirror 视图，安装编辑扩展及宿主回调。 */
   constructor(parent: HTMLElement, options: EditorOptions, callbacks: EditorCallbacks) {
@@ -163,6 +193,8 @@ export class EditorController implements EditorFacade {
     const isLocked = (): boolean => this.locked
     return [
       history(),
+      sectionFlash,
+      scrollPastEnd(),
       // 锁定态改用浏览器原生选区：自绘选区会隐藏并重写 DOM 选区，导致无法选中复制
       this.selectionCompartment.of(this.locked ? [] : drawSelection()),
       dropCursor(),
@@ -581,10 +613,23 @@ export class EditorController implements EditorFacade {
   }
 
   /** 滚动到指定源码范围并在编辑器中定位。 */
-  revealOffset(offset: number): void {
+  revealOffset(offset: number, sectionEnd?: number): void {
     const target = Math.max(0, Math.min(offset, this.view.state.doc.length))
-    this.view.dispatch({ selection: { anchor: target }, scrollIntoView: true })
-    this.view.focus()
+    if (sectionEnd === undefined) {
+      this.view.dispatch({ selection: { anchor: target }, scrollIntoView: true })
+      this.view.focus()
+      return
+    }
+    window.clearTimeout(this.outlineTimer)
+    this.view.dispatch({ effects: flashSection.of(null) })
+    this.view.dispatch({
+      ...(this.locked ? {} : { selection: { anchor: target } }),
+      effects: [
+        EditorView.scrollIntoView(target, { y: 'start', yMargin: 12 }),
+        flashSection.of({ from: target, to: Math.min(this.view.state.doc.length, sectionEnd) })
+      ]
+    })
+    this.outlineTimer = window.setTimeout(() => this.view.dispatch({ effects: flashSection.of(null) }), 1000)
   }
 
   /** 更新查找词、替换词及查找选项。 */
@@ -780,6 +825,7 @@ export class EditorController implements EditorFacade {
 
   /** 销毁 CodeMirror 视图并释放其监听和资源。 */
   destroy(): void {
+    window.clearTimeout(this.outlineTimer)
     this.view.scrollDOM.removeEventListener('scroll', this.scrollListener)
     this.view.destroy()
   }

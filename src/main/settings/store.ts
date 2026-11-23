@@ -52,7 +52,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   appBehavior: {
     closeAction: 'ask',
-    restoreSession: true
+    restoreSession: true,
+    autoUpdate: true
   },
   openFiles: [],
   recentFiles: [],
@@ -150,7 +151,7 @@ export class SettingsStore {
 
   /** 记录当前打开的文稿，供下次启动恢复 */
   async setOpenFiles(paths: string[]): Promise<void> {
-    const next = paths.filter((path) => Boolean(path)).slice(0, 12)
+    const next = paths.filter((path) => Boolean(path)).slice(0, 30)
     if (
       next.length === this.settings.openFiles.length &&
       next.every((p, i) => p === this.settings.openFiles[i])
@@ -216,12 +217,13 @@ export class SettingsStore {
         closeAction: ['ask', 'tray', 'quit'].includes(settings.appBehavior?.closeAction ?? '')
           ? settings.appBehavior.closeAction
           : 'ask',
-        restoreSession: settings.appBehavior?.restoreSession !== false
+        restoreSession: settings.appBehavior?.restoreSession !== false,
+        autoUpdate: settings.appBehavior?.autoUpdate !== false
       },
       openFiles: Array.isArray(settings.openFiles)
         ? settings.openFiles
             .filter((path): path is string => typeof path === 'string' && Boolean(path.trim()))
-            .slice(0, 12)
+            .slice(0, 30)
         : [],
       recentFiles: Array.isArray(settings.recentFiles)
         ? settings.recentFiles

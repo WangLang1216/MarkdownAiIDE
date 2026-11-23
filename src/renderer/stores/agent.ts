@@ -12,7 +12,6 @@ import type {
   ReferenceRole,
   ReviewData,
   SourceAsset,
-  SourcePreviewChunk,
   StyleProfile,
   StartTaskInput,
   TaskEvent,
@@ -164,7 +163,6 @@ export const useAgentStore = defineStore('agent', () => {
   /** 自动预测失败时的最近一次提示时间，避免频繁打扰 */
   let lastAutoWarnAt = 0
   const previewSource = ref<SourceAsset | null>(null)
-  const previewChunks = ref<SourcePreviewChunk[]>([])
   const previewOpen = ref(false)
 
   const selectedProvider = computed<ProviderConfig | null>(() => {
@@ -557,18 +555,16 @@ export const useAgentStore = defineStore('agent', () => {
     sources.value = sources.value.map((item) => (item.sourceId === sourceId ? updated : item))
   }
 
-  async function openSourcePreview(sourceId: string): Promise<void> {
+  function openSourcePreview(sourceId: string): void {
     const asset = sources.value.find((item) => item.sourceId === sourceId)
     if (!asset) return
     previewSource.value = asset
-    previewChunks.value = await window.api.references.preview(sourceId)
     previewOpen.value = true
   }
 
   function closeSourcePreview(): void {
     previewOpen.value = false
     previewSource.value = null
-    previewChunks.value = []
   }
 
   async function removeSource(sourceId: string): Promise<void> {
@@ -652,7 +648,6 @@ export const useAgentStore = defineStore('agent', () => {
     isRunning,
     predicting,
     previewSource,
-    previewChunks,
     previewOpen,
     hydrate,
     refreshProviders,

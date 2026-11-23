@@ -45,6 +45,7 @@ const CONTEXT_BUDGET = 14_000
 interface StoredSource {
   asset: SourceAsset
   chunks: SourceChunk[]
+  pdfPath?: string
 }
 
 /** 聚合纳入提示的来源文本、原始片段及截断状态。 */
@@ -106,14 +107,23 @@ export class ReferenceService {
   }
 
   /** 生成指定来源的片段预览和位置标签。 */
-  preview(sourceId: string): SourcePreviewChunk[] {
+  preview(sourceId: string, offset = 0): SourcePreviewChunk[] {
     const stored = this.get(sourceId)
-    return stored.chunks.slice(0, 40).map((chunk) => ({
+    return stored.chunks.slice(offset, offset + 25).map((chunk) => ({
       chunkId: chunk.chunkId,
-      text: chunk.text.slice(0, 1200),
+      text: chunk.text,
       label: describeLocator(chunk.locator),
       uncertain: chunk.uncertain
     }))
+  }
+
+  async previewPdf(sourceId: string): Promise<Uint8Array | null> {
+    const { asset, pdfPath } = this.get(sourceId)
+    if (!pdfPath) return null
+    const info = await stat(pdfPath)
+    if (!info.isFile() || info.size > MAX_SOURCE_BYTES) return null
+    const data = await readFile(pdfPath)
+    return data.length <= MAX_SOURCE_BYTES && sha256(data) === asset.contentHash ? data : null
   }
 
   /** 更新来源的参考用途并持久化元数据。 */
@@ -159,10 +169,13 @@ export class ReferenceService {
       return await this.add({ kind: 'file', path: absPath, roles: ['facts'], title: rawName })
     } catch (error) {
       if (!(error instanceof AppError) || error.code !== 'SOURCE_UNREADABLE') throw error
+      const isPdf = ext === '.pdf' && buffer.subarray(0, 1024).includes('%PDF-')
       return this.storeFileAsset({
         sourceId: newId('src'), title: rawName, roles: ['facts'], relativePath: safeName,
-        contentHash: sha256(buffer), kind: 'file', chunks: [], status: 'partial',
-        message: '已附加文件。' + error.message
+        contentHash: sha256(buffer), kind: isPdf ? 'pdf' : 'file',
+        ...(isPdf ? { pdfPath: absPath } : {}),
+        chunks: [], status: 'partial',
+        message: isPdf ? '无法提取 PDF 文字，可尝试查看原页。' : '已附加文件。' + error.message
       })
     }
   }
@@ -386,22 +399,20 @@ export class ReferenceService {
       }
 
       if (ext === '.pdf') {
-        const { chunks, scanned } = await extractPdf(await readFile(absPath), sourceId)
-        if (!chunks.length)
-          throw new AppError(
-            'SOURCE_UNREADABLE',
-            'PDF 中没有可提取的文字，可能是扫描版，需要 OCR 或视觉模型。'
-          )
+        const bytes = await readFile(absPath)
+        const { chunks, scanned } = await extractPdf(bytes, sourceId)
         return this.storeFileAsset({
           sourceId,
           title: input.title || basename(absPath),
           roles,
           relativePath,
-          contentHash: sha256(chunks.map((chunk) => chunk.text).join('\n')),
+          contentHash: sha256(bytes),
           kind: 'pdf',
           chunks,
-          status: scanned ? 'partial' : 'ready',
-          message: scanned ? '部分页面文字过少，可能为扫描页，未能完整读取。' : null
+          pdfPath: absPath,
+          status: scanned || !chunks.length ? 'partial' : 'ready',
+          message: !chunks.length ? '扫描版可预览原页。AI 读取文字需先进行 OCR。'
+            : scanned ? '部分页面文字过少，可能为扫描页，未能完整读取。' : null
         })
       }
 
@@ -435,6 +446,7 @@ export class ReferenceService {
     contentHash: string
     kind: 'file' | 'docx' | 'pdf'
     chunks: SourceChunk[]
+    pdfPath?: string
     status?: 'ready' | 'partial'
     message?: string | null
   }): Promise<SourceAsset> {
@@ -455,7 +467,7 @@ export class ReferenceService {
       chunkCount: input.chunks.length,
       createdAt: Date.now()
     }
-    const stored = { asset, chunks: input.chunks }
+    const stored = { asset, chunks: input.chunks, pdfPath: input.pdfPath }
     this.sources.set(asset.sourceId, stored)
     await this.persist(stored)
     return asset
@@ -779,10 +791,10 @@ async function extractPdf(
     GlobalWorkerOptions?: { workerSrc: string }
   }
   if (pdfjs.GlobalWorkerOptions) {
-    const root = app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked') : app.getAppPath()
-    pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(
-      join(root, 'node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs')
-    ).href
+    const worker = app.isPackaged
+      ? join(process.resourcesPath, 'app.asar.unpacked', 'node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs')
+      : require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs')
+    pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(worker).href
   }
   const doc = await pdfjs.getDocument({
     data: new Uint8Array(buffer),

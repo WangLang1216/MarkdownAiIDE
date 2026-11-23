@@ -124,6 +124,17 @@ function onCursorLine(line: number): void {
   ui.cursorLine = line
 }
 
+watch(() => ui.outlineJump, (target) => {
+  if (!target) return
+  if (ui.mode === 'split') {
+    syncing = true
+    const line = documents.activeText.slice(0, target.from).split('\n').length - 1
+    preview.value?.revealHeading(line)
+    releaseSync()
+  }
+  editorApi.current?.revealOffset(target.from, target.to)
+})
+
 watch(
   () => documents.activeId,
   () => {

@@ -13,6 +13,7 @@ import { useUiStore } from '../stores/ui'
 import { useWorkspaceStore } from '../stores/workspace'
 import { editorApi } from '../lib/editorApi'
 import Icon from '../components/Icon.vue'
+import AttachmentPreview from './AttachmentPreview.vue'
 
 const agent = useAgentStore()
 const documents = useDocumentsStore()
@@ -806,49 +807,13 @@ watch(() => agent.history[0]?.task.taskId, async () => {
     </div>
 
     <Teleport to="body">
-      <div
+      <AttachmentPreview
         v-if="agent.previewOpen && agent.previewSource"
-        class="modal-backdrop"
-        @click.self="agent.closeSourcePreview()"
-      >
-        <section
-          class="modal narrow source-preview"
-          role="dialog"
-          aria-modal="true"
-          aria-label="参考材料片段"
-        >
-          <div class="modal-title">
-            <div>
-              <span class="eyebrow">SOURCE PREVIEW</span>
-              <h2>{{ agent.previewSource.title }}</h2>
-              <p>
-                {{ agent.previewSource.kind.toUpperCase() }} · {{ agent.previewSource.chunkCount }} 个片段 ·
-                {{ agent.previewSource.status === 'ready' ? '已就绪' : agent.previewSource.status }}
-              </p>
-            </div>
-            <button class="iconbtn" aria-label="关闭" @click="agent.closeSourcePreview()">
-              <Icon name="x" :size="15" />
-            </button>
-          </div>
-          <p v-if="agent.previewSource.message" class="source-message">{{ agent.previewSource.message }}</p>
-          <div class="source-chunks">
-            <div v-for="chunk in agent.previewChunks" :key="chunk.chunkId" class="source-chunk">
-              <span class="source-label"
-                >{{ chunk.label }}<span v-if="chunk.uncertain" class="tag">待核对</span></span
-              >
-              <p>{{ chunk.text }}</p>
-            </div>
-            <p v-if="!agent.previewChunks.length" class="empty-hint">没有可展示的片段。</p>
-          </div>
-          <div class="modal-footer">
-            <span class="note">片段按章节/页/段落切分，引用会定位到这些范围。</span>
-            <div class="source-actions">
-              <button class="ghostbtn" @click="removePreviewSource()">移除参考</button>
-              <button class="darkbtn" @click="agent.closeSourcePreview()">完成</button>
-            </div>
-          </div>
-        </section>
-      </div>
+        :key="agent.previewSource.sourceId"
+        :source="agent.previewSource"
+        @close="agent.closeSourcePreview()"
+        @remove="removePreviewSource()"
+      />
     </Teleport>
   </div>
 </template>
@@ -1146,60 +1111,11 @@ watch(() => agent.history[0]?.task.taskId, async () => {
   color: var(--accent);
 }
 
-.source-preview {
-  max-height: calc(100vh - 80px);
-  display: flex;
-  flex-direction: column;
-}
 
-.source-message {
-  font-size: 10px;
-  color: #9a6a3f;
-  margin: 0 0 10px;
-}
 
-.source-chunks {
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 14px;
-}
 
-.source-chunk {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: var(--side);
-}
 
-.source-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 9px;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
 
-.source-chunk p {
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.8;
-  color: var(--soft);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 140px;
-  overflow: hidden;
-}
 
-.empty-hint {
-  font-size: 11px;
-  color: var(--muted);
-}
 
-.source-actions {
-  display: flex;
-  gap: 10px;
-}
 </style>

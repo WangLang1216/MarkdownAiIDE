@@ -179,6 +179,7 @@ md.core.ruler.before('inline', 'heading_ids', (state) => {
   for (let i = 0; i < state.tokens.length; i += 1) {
     const token = state.tokens[i]
     if (token.type !== 'heading_open') continue
+    if (token.map && !(state.env as MarkdownEnv).forExport) token.attrSet('data-source-line', String(token.map[0]))
     const inline = state.tokens[i + 1]
     if (!inline || inline.type !== 'inline') continue
     const found = findHeadingId(inline.content)

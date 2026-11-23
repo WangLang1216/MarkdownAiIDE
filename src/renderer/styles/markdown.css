@@ -644,6 +644,7 @@
 .cm-widget-image img {
   max-width: 100%;
   max-height: 420px;
+  cursor: zoom-in;
   border-radius: 6px;
   border: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
 }
@@ -680,8 +681,13 @@
   border-top: 1px solid var(--line);
 }
 
+/* CodeMirror measures the widget's border box for mouse hit testing. */
+.cm-widget-spaced-block {
+  display: flow-root;
+  padding-block: 12px;
+}
+
 .cm-widget-table {
-  margin: 12px 0;
   overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -713,7 +719,6 @@
 }
 
 .cm-widget-code {
-  margin: 12px 0;
   border-radius: 8px;
   background: var(--code);
   border: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
@@ -778,7 +783,6 @@
 }
 
 .cm-widget-toc {
-  margin: 12px 0;
   padding: 13px 16px 11px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1025,3 +1029,22 @@
 :root[data-theme='dark'] .hljs-quote {
   color: #93a38f;
 }
+
+
+.cm-outline-flash {
+  animation: outline-flash 950ms ease-out;
+}
+
+@keyframes outline-flash {
+  from { background-color: color-mix(in srgb, var(--accent) 24%, transparent); }
+  to { background-color: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-outline-flash {
+    animation: none;
+    background-color: var(--selection);
+  }
+}
+
+.preview-pane .markdown-body img { cursor: zoom-in; }

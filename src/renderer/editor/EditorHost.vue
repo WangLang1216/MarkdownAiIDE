@@ -7,6 +7,7 @@ import { useDocumentsStore } from '../stores/documents'
 import { useSettingsStore } from '../stores/settings'
 import { useAgentStore } from '../stores/agent'
 import { useUiStore } from '../stores/ui'
+import { parseSections } from '@shared/markdown/outline'
 import { useWorkspaceStore } from '../stores/workspace'
 import { EditorController } from './createEditor'
 import SelectionMenu from './SelectionMenu.vue'
@@ -95,21 +96,23 @@ function scheduleAutoPrediction(): void {
   }, settings.settings.prediction.debounceMs)
 }
 
-/** 图片同时写入文稿资源目录并作为 AI 参考；未打开文稿时仅作参考 */
+/** 插入文稿图片，未打开文稿时可将其加入 AI 参考。 */
 async function handleImageFile(file: File): Promise<void> {
   if (ui.locked) {
     ui.toast('文稿已锁定，解锁后再插入图片或附件', 'warning')
     return
   }
   try {
+    const documentId = documents.activeId
     const buffer = await file.arrayBuffer()
     const name = file.name || '粘贴的图片.png'
-    void agent.addAttachmentBytes(name, file.type, buffer)
-    if (!documents.activeId) {
+    if (!documentId) {
+      await agent.addAttachmentBytes(name, file.type, buffer)
       ui.toast('已添加为 AI 参考图片（先打开文稿才能写入本地图片）', 'info')
       return
     }
-    const saved = await window.api.documents.saveImage(documents.activeId, name, file.type, buffer)
+    const saved = await window.api.documents.saveImage(documentId, name, file.type, buffer)
+    if (documentId !== documents.activeId) return
     const alt = saved.alt.replace(/[[\]]/g, ' ')
     editorApi.current?.insertText(`\n![${alt}](./${saved.relativePath})\n`)
     void workspace.load()
@@ -119,7 +122,28 @@ async function handleImageFile(file: File): Promise<void> {
   }
 }
 
+function onDocumentTocJump(event: Event): void {
+  const offset = (event as CustomEvent<number>).detail
+  const section = parseSections(documents.activeText).find((item) => item.headingStart === offset)
+  if (!section) return
+  ui.cursorOffset = section.headingStart
+  ui.outlineJump = { from: section.headingStart, to: section.sectionEnd }
+}
+
+function previewDocumentImage(event: MouseEvent | KeyboardEvent): void {
+  const image = (event.target as HTMLElement | null)?.closest<HTMLImageElement>('.cm-widget-image img')
+  if (!image) return
+  event.preventDefault()
+  event.stopPropagation()
+  ui.openImage(image.currentSrc || image.src, image.alt || '文稿图片')
+}
+
 function onEditorMouseDown(event: MouseEvent): void {
+  if (event.button === 0 && (event.target as HTMLElement | null)?.closest('.cm-widget-image img')) {
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
   // 锁定态把左键事件留给浏览器：可像普通网页一样拖选表格、公式与正文并复制
   if (ui.locked) {
     if (event.button === 0) event.stopPropagation()
@@ -372,7 +396,7 @@ onMounted(() => {
   document.addEventListener('pointerdown', closeOverlays)
   document.addEventListener('keydown', onMenuKeydown)
 
-  // 图片粘贴：作为参考附件，不直接写入正文
+  // 图片粘贴沿用文稿的本地资源写入流程。
   instance.view.dom.addEventListener('paste', (event: ClipboardEvent) => {
     const items = event.clipboardData?.items
     if (!items) return
@@ -483,7 +507,8 @@ watch(
 )
 
 function onDragOver(event: DragEvent): void {
-  if (event.dataTransfer?.types.includes('Files')) return
+  if (event.dataTransfer?.types.includes('Files') &&
+      !Array.from(event.dataTransfer.items).some((item) => item.type.startsWith('image/'))) return
   event.preventDefault()
   dragging.value = true
 }
@@ -523,6 +548,9 @@ defineExpose({ focus: () => controller.value?.focus() })
     ref="host"
     class="editor-host"
     :class="{ 'drag-over': dragging }"
+    @moye-outline-jump="onDocumentTocJump"
+    @click.capture="previewDocumentImage"
+    @keydown.enter.capture="previewDocumentImage"
     @dragover="onDragOver"
     @dragleave="dragging = false"
     @drop="onDrop"

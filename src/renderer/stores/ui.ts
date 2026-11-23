@@ -7,7 +7,7 @@ import { defineStore } from 'pinia'
 import type { ContentWidth, EditorMode } from '../types'
 
 /** 限定界面状态库可切换的弹窗类型。 */
-export type ModalName = 'appearance' | 'providers' | 'shortcuts' | 'review' | 'about' | null
+export type ModalName = 'appearance' | 'providers' | 'shortcuts' | 'review' | 'about' | 'update' | null
 
 /** 保存图片预览弹窗需要的图像地址和说明。 */
 export interface ImagePreviewState {
@@ -66,6 +66,7 @@ export const useUiStore = defineStore('ui', () => {
   const reviewOpen = ref(false)
   const findOpen = ref(false)
   const imagePreview = ref<ImagePreviewState | null>(null)
+  const outlineJump = ref<{ from: number; to: number } | null>(null)
   const cursorLine = ref(1)
   const cursorOffset = ref(0)
   const selectionFrom = ref(0)
@@ -206,6 +207,7 @@ export const useUiStore = defineStore('ui', () => {
     findOpen,
     imagePreview,
     cursorLine,
+    outlineJump,
     cursorOffset,
     selectionFrom,
     selectionTo,

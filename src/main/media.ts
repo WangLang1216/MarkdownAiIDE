@@ -3,10 +3,11 @@
  * 允许相对路径与 ../，但真实路径必须仍在授权根目录内。
  */
 
-import { readFile, realpath } from 'node:fs/promises'
+import { readFile, realpath, stat } from 'node:fs/promises'
 import { dirname, extname, resolve } from 'node:path'
-import { protocol } from 'electron'
+import { nativeImage, protocol } from 'electron'
 import { AppError } from '@shared/errors'
+import { collectImageRefs } from '@shared/markdown/images'
 import type { DocumentService } from './documents/service'
 import type { WorkspaceService } from './workspace/service'
 import { isPathInside } from './utils/fs'
@@ -91,6 +92,39 @@ export class MediaService {
     if (!isPathInside(realRoot, real)) throw new AppError('OUT_OF_SCOPE', '图片路径超出授权目录。')
     if (!MIME[extname(real).toLowerCase()]) throw new AppError('INVALID_INPUT', '不支持的图片类型。')
     return real
+  }
+
+  async documentVisionImages(documentId: string, markdown: string, limit: number): Promise<string[]> {
+    const images: string[] = []
+    let budget = 8 * 1024 * 1024
+    for (const ref of collectImageRefs(markdown).slice(0, 24)) {
+      if (images.length >= limit) break
+      try {
+        const path = await this.resolveForDocument(documentId, decodeURIComponent(ref.replace(/^<|>$/g, '')))
+        if ((await stat(path)).size > 12 * 1024 * 1024) continue
+        const mime = MIME[extname(path).toLowerCase()]
+        const bytes = await readFile(path)
+        const nativeFormat = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(mime)
+        if (nativeFormat && bytes.length <= Math.min(budget, 2 * 1024 * 1024)) {
+          images.push('data:' + mime + ';base64,' + bytes.toString('base64'))
+          budget -= bytes.length
+          continue
+        }
+        const image = nativeImage.createFromBuffer(bytes)
+        if (image.isEmpty()) continue
+        const size = image.getSize()
+        const dimensions = size.width >= size.height
+          ? { width: Math.min(1600, size.width) }
+          : { height: Math.min(1600, size.height) }
+        const resized = image.resize(dimensions).toJPEG(88)
+        if (resized.length > budget) continue
+        images.push('data:image/jpeg;base64,' + resized.toString('base64'))
+        budget -= resized.length
+      } catch {
+        // 无法读取的文稿图片不影响任务继续。
+      }
+    }
+    return images
   }
 
   /** 导出 HTML 前把本地图片内联为 data URL，保证文件可离线打开 */

@@ -795,6 +795,7 @@ export interface AppSettings {
     closeAction: CloseAction
     /** 启动时恢复上次退出时打开的文稿 */
     restoreSession: boolean
+    autoUpdate: boolean
   }
   /** 上次退出时仍打开的文稿绝对路径，用于下次启动恢复 */
   openFiles: string[]

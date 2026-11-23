@@ -330,9 +330,7 @@ function widgetForBlock(
         raw: match[2],
         alt: match[1],
         block: true,
-        loadRemote: options.loadRemoteImages(),
-        sourcePos: from,
-        locked
+        loadRemote: options.loadRemoteImages()
       })
     }
   }

@@ -14,6 +14,11 @@ files:
   - '!**/*.map'
   - '!**/*.ts'
 
+publish:
+  provider: github
+  owner: WangLang1216
+  repo: MarkdownAiIDE
+
 asar: true
 asarUnpack:
   - node_modules/pdfjs-dist/**/*
@@ -24,9 +29,10 @@ win:
     - target: nsis
       arch:
         - x64
-  artifactName: 小彭友-MarkdownAiIDE-${version}-${arch}.${ext}
+  artifactName: MarkdownAiIDE-${version}-${arch}-Setup.${ext}
 
 nsis:
+  deleteAppDataOnUninstall: false
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true

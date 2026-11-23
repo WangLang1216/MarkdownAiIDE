@@ -125,15 +125,24 @@ export class ExportService {
     try {
       await window.loadFile(tempHtml)
       await new Promise((resolve) => setTimeout(resolve, 450))
-      const marginInch = Math.min(2, Math.max(0.2, input.marginMm / 25.4))
+      const landscape = Boolean(input.landscape)
+      const pageSize = input.pageSize === 'Letter' ? 'Letter' : 'A4'
+      const marginMm = Number.isFinite(input.marginMm) ? Math.min(40, Math.max(5, input.marginMm)) : 18
+      const paperHeight = pageSize === 'Letter' ? (landscape ? 215.9 : 279.4) : (landscape ? 210 : 297)
+      // 打印设置控制纸张与留白，导入主题仍可控制正文样式。
+      await window.webContents.insertCSS(
+        '@page { size: auto !important; margin: ' + marginMm + 'mm !important; }\n' +
+          ':root { --print-media-height: ' + (paperHeight - 2 * marginMm - 14) + 'mm; }'
+      )
+      const marginInches = marginMm / 25.4
       const pdf = await window.webContents.printToPDF({
-        pageSize: input.pageSize,
+        pageSize,
         printBackground: true,
-        landscape: Boolean(input.landscape),
-        margins: { top: marginInch, bottom: marginInch, left: marginInch, right: marginInch },
+        landscape,
+        margins: { top: marginInches, bottom: marginInches, left: marginInches, right: marginInches },
         preferCSSPageSize: false
       })
-      await writeFile(target, pdf)
+      await atomicWriteFile(target, pdf)
       return { ok: true, path: target, message: `已导出 ${basename(target)}` }
     } catch (error) {
       logger.error('exports', 'PDF 导出失败', {

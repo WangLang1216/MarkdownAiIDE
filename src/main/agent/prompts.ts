@@ -21,6 +21,7 @@ export interface PromptContext {
   attachments: Array<{ name: string; mime: string }>
   /** 指示本轮提示是否可按视觉模型处理图片。 */
   visionAvailable: boolean
+  documentImageCount: number
   /** 指示是否可让模型请求执行声明过的工具。 */
   toolCalling: boolean
   /** 提供给模型的参考来源摘要与片段文本。 */
@@ -134,6 +135,11 @@ export function buildSystemPrompt(context: PromptContext): string {
       context.attachments.map((item) => `- ${item.name} (${item.mime})`).join('\n') +
         (context.visionAvailable ? '' : '\n注意：当前模型不支持视觉，附件内容不可见；不要猜测图片内容。')
     )
+  }
+
+  if (context.documentImageCount) {
+    parts.push('文稿图片：视觉输入的最后 ' + context.documentImageCount +
+      ' 张是当前文稿或选区中的本地图片，按出现顺序提供。请结合正文使用，勿猜测未提供的图片。')
   }
 
   if (context.sources.includedSources.length) {

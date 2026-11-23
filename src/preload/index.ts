@@ -37,6 +37,12 @@ const subscribe = <T>(channel: string, listener: (payload: T) => void): (() => v
 
 /** 预加载层暴露给页面的白名单 API；不暴露通用 IPC 或 Node.js 能力。 */
 const api: DesktopAPI = {
+  update: {
+    state: () => invoke(IPC.update.state),
+    check: () => invoke(IPC.update.check),
+    download: () => invoke(IPC.update.download),
+    install: () => invoke(IPC.update.install)
+  },
   app: {
     info: () => invoke(IPC.app.info),
     openExternal: (url) => invoke(IPC.app.openExternal, url),
@@ -126,7 +132,8 @@ const api: DesktopAPI = {
     addFromBytes: (name, bytes) => invoke(IPC.references.addFromBytes, name, bytes),
     list: () => invoke(IPC.references.list),
     remove: (sourceId) => invoke(IPC.references.remove, sourceId),
-    preview: (sourceId) => invoke(IPC.references.preview, sourceId),
+    preview: (sourceId, offset) => invoke(IPC.references.preview, sourceId, offset),
+    previewPdf: (sourceId) => invoke(IPC.references.previewPdf, sourceId),
     setRoles: (sourceId, roles) => invoke(IPC.references.setRoles, sourceId, roles)
   },
   styles: {
@@ -183,6 +190,7 @@ const api: DesktopAPI = {
       subscribe<Extract<AppEvent, { type: 'document-changed' }>>(IPC.events.documentChanged, listener),
     documentConflict: (listener) =>
       subscribe<Extract<AppEvent, { type: 'document-conflict' }>>(IPC.events.documentConflict, listener),
+    updateChanged: (listener) => subscribe(IPC.events.updateChanged, listener),
     settingsChanged: (listener) => subscribe(IPC.events.settingsChanged, listener),
     documentOpened: (listener) => subscribe(IPC.events.documentOpened, listener),
     closeRequested: (listener) => subscribe(IPC.events.closeRequested, listener),

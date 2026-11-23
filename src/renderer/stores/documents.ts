@@ -398,9 +398,9 @@ export const useDocumentsStore = defineStore('documents', () => {
   }
 
   /** 主进程请求同步：返回编辑器当前文本 */
-  function currentTextFor(documentId: string): string {
+  function currentTextFor(documentId: string): string | undefined {
     if (activeId.value === documentId && editorApi.current) return editorApi.current.getText()
-    return tabs.value.find((item) => item.snapshot.documentId === documentId)?.snapshot.text ?? ''
+    return tabs.value.find((item) => item.snapshot.documentId === documentId)?.snapshot.text
   }
 
   /** 主进程请求应用编辑：活动文档走编辑器事务，其余标签直接更新缓冲区 */

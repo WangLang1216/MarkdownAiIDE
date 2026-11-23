@@ -6,7 +6,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useUiStore } from '../stores/ui'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useDocumentsStore } from '../stores/documents'
-import { ELEMENT_SNIPPETS, EXTENDED_SNIPPETS, MODULE_SNIPPETS, importedTemplates, importContentTemplate } from '../editor/snippets'
+import { ELEMENT_SNIPPETS, EXTENDED_SNIPPETS, MODULE_SNIPPETS, importedTemplates, importContentTemplate, deleteContentTemplate } from '../editor/snippets'
 import { editorApi } from '../lib/editorApi'
 import { insertImageElement } from '../lib/actions'
 import Icon from '../components/Icon.vue'
@@ -35,6 +35,14 @@ async function importTemplates(event: Event): Promise<void> {
     }
   }
   input.value = ''
+}
+
+function removeTemplate(id: string): void {
+  try {
+    deleteContentTemplate(id)
+  } catch (error) {
+    ui.toast((error as Error).message || '删除模板失败', 'error')
+  }
 }
 
 const elementQuery = ref('')
@@ -83,12 +91,10 @@ const moduleOrder = ref(
 )
 const headingCollapsed = ref(window.localStorage.getItem('moye.elementsCollapsed') === '1')
 // 扩展元素默认收起：使用新键，避免沿用旧版“展开”的历史状态
-const EXTENDED_COLLAPSED_KEY = 'moye.extendedCollapsedV2'
-const storedExtendedCollapsed = window.localStorage.getItem(EXTENDED_COLLAPSED_KEY)
-const extendedCollapsed = ref(
-  storedExtendedCollapsed === null ? true : storedExtendedCollapsed === '1'
-)
-const moduleCollapsed = ref(window.localStorage.getItem('moye.modulesCollapsed') === '1')
+const EXTENDED_COLLAPSED_KEY = 'moye.extendedCollapsedV3'
+const extendedCollapsed = ref(window.localStorage.getItem(EXTENDED_COLLAPSED_KEY) === '1')
+const MODULE_COLLAPSED_KEY = 'moye.modulesCollapsedV2'
+const moduleCollapsed = ref(window.localStorage.getItem(MODULE_COLLAPSED_KEY) !== '0')
 const reorder = ref<{ id: string; target: string | null } | null>(null)
 
 const orderedElements = computed(() =>
@@ -184,7 +190,7 @@ function toggleExtended(): void {
 
 function toggleModules(): void {
   moduleCollapsed.value = !moduleCollapsed.value
-  window.localStorage.setItem('moye.modulesCollapsed', moduleCollapsed.value ? '1' : '0')
+  window.localStorage.setItem(MODULE_COLLAPSED_KEY, moduleCollapsed.value ? '1' : '0')
 }
 
 function startDrag(event: DragEvent, id: string): void {
@@ -435,31 +441,27 @@ async function switchWorkspace(): Promise<void> {
           <Icon :name="extendedCollapsed ? 'right' : 'down'" :size="10" />
           扩展元素
         </button>
-        <span>扩展语法</span>
       </div>
-      <div v-show="!extendedCollapsed || elementQuery" id="extended-list" class="module-list">
+      <div v-show="!extendedCollapsed || elementQuery" id="extended-list" class="element-grid">
         <div
           v-for="item in filteredExtended"
           :key="item.id"
-          class="module-cell"
+          class="element-cell"
           :class="{ 'drop-target': reorder?.target === item.id, sorting: reorder?.id === item.id }"
           @dragover.prevent="onReorderOver(item.id)"
           @drop.prevent.stop="finishReorder(item.id, 'extended')"
         >
           <button
-            class="module-button"
+            class="element-tile"
             draggable="true"
             :title="`点击或拖动插入${item.label}`"
             @click="insert(item.id)"
             @dragstart="startDrag($event, item.id)"
             @dragend="endReorder"
           >
-            <span class="module-icon">
-              <span class="glyph-icon">{{ item.glyph }}</span>
-            </span>
-            <span
-              >{{ item.label }}<small>{{ item.description }}</small></span
-            >
+            <span v-if="item.glyph" class="glyph">{{ item.glyph }}</span>
+            <Icon v-else :name="item.id === 'mermaid' ? 'workflow' : 'info'" :size="15" />
+            <span class="label">{{ item.label }}</span>
           </button>
           <span
             class="reorder-grip"
@@ -482,7 +484,7 @@ async function switchWorkspace(): Promise<void> {
           @click="toggleModules"
         >
           <Icon :name="moduleCollapsed ? 'right' : 'down'" :size="10" />
-          内容模块
+          内容模板
         </button>
         <button class="textbtn" @click="templateInput?.click()">导入模板</button>
         <input ref="templateInput" type="file" accept=".md,.markdown,.txt" multiple hidden @change="importTemplates" />
@@ -512,7 +514,12 @@ async function switchWorkspace(): Promise<void> {
               >{{ item.label }}<small>{{ item.description }}</small></span
             >
           </button>
+          <button v-if="item.id.startsWith('imported-')" type="button" class="template-delete iconbtn"
+            :aria-label="'删除模板 ' + item.label" @click.stop="removeTemplate(item.id)">
+            <Icon name="x" :size="12" />
+          </button>
           <span
+            v-else
             class="reorder-grip"
             draggable="true"
             title="拖动调整顺序"
@@ -643,3 +650,8 @@ async function switchWorkspace(): Promise<void> {
     </div>
   </aside>
 </template>
+
+<style scoped>
+.searchbox input:focus-visible { outline: none; }
+.template-delete { position: absolute; right: 4px; top: 4px; width: 22px; height: 22px; }
+</style>

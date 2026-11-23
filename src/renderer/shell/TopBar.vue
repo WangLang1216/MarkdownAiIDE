@@ -6,6 +6,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useDocumentsStore } from '../stores/documents'
 import { useSettingsStore } from '../stores/settings'
 import { useUiStore } from '../stores/ui'
+import { useUpdatesStore } from '../stores/updates'
 import {
   closeTabWithConfirm,
   newDocument,
@@ -39,6 +40,7 @@ type MenuName = 'file' | 'edit' | 'view' | 'help' | 'export'
 const documents = useDocumentsStore()
 const settings = useSettingsStore()
 const ui = useUiStore()
+const updates = useUpdatesStore()
 
 const openMenu = ref<MenuName | null>(null)
 const menuPosition = ref({ x: 0, y: 0 })
@@ -237,6 +239,8 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
       <button :class="{ open: openMenu === 'edit' }" @click="toggle('edit', $event)">编辑</button>
       <button :class="{ open: openMenu === 'view' }" @click="toggle('view', $event)">视图</button>
       <button :class="{ open: openMenu === 'help' }" @click="toggle('help', $event)">帮助</button>
+      <button v-if="updates.state.release" type="button" class="update-indicator"
+        @click="closeMenu(); ui.modal = 'update'"><Icon name="download" :size="12" />有新版本</button>
     </nav>
 
     <div class="title-doc">

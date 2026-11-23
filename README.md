@@ -28,11 +28,11 @@
 
 ## 安装与启动
 
-1. 打开 [GitHub Releases](https://github.com/WangLang1216/MarkdownAiIDE/releases/latest)，下载 Windows x64 的 `MarkdownAiIDE-1.0.1-x64-Setup.exe`。
+1. 打开 [GitHub Releases](https://github.com/WangLang1216/MarkdownAiIDE/releases/latest)，下载 Windows x64 的 `MarkdownAiIDE-1.0.2-x64-Setup.exe`。
 2. 运行安装程序，按向导选择安装目录。
 3. 从开始菜单或桌面快捷方式打开「小彭友」。通过「文件」打开 Markdown 文稿或工作区，也可以将 Markdown 文件拖到标签栏。
 
-v1.0.1 提供未签名的 Windows x64 安装包。发布页也提供源码 ZIP 和 SHA-256 校验文件。
+v1.0.2 提供未签名的 Windows x64 安装包。发布页也提供源码 ZIP 和 SHA-256 校验文件。
 
 ### 体验写作助手
 
@@ -55,7 +55,9 @@ npm run dev
 | `npm run typecheck` | 检查主进程和渲染进程的 TypeScript 类型 |
 | `npm test` | 运行 Vitest 单元测试 |
 | `npm run build` | 检查类型并构建生产代码 |
-| `npm run package` | 在 Windows 上生成 NSIS 安装包，输出到 `dist/` |
+| `npm run package` | 在 Windows 上生成 NSIS 安装包和更新清单，输出到 `dist/` |
+
+发布新版时，先更新 `package.json` 和锁文件中的版本号。运行 `npm run package` 后，将同一次构建生成的安装包、`latest.yml` 和 `.blockmap` 上传到对应的 GitHub 正式发行版，例如 `v1.0.2`。上传时保留文件名，`latest.yml` 用于客户端下载与校验安装包。
 
 项目基于 Electron、Vue 3、TypeScript 和 CodeMirror 6。模块划分、IPC、文档 Agent 与导出链路见[代码实现说明](docs/04-代码实现说明.md)。
 

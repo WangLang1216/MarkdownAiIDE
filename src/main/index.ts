@@ -7,6 +7,7 @@ import { stat } from 'node:fs/promises'
 import { app, BrowserWindow, Menu, Notification, Tray, nativeImage, shell } from 'electron'
 import { IPC } from '@shared/ipc'
 import { appIconPath } from './app/icon'
+import { UpdateService } from './app/updates'
 import { appPaths, configureCacheDir, ensureAppDirectories } from './utils/paths'
 import { logger } from './utils/logger'
 import { SettingsStore } from './settings/store'
@@ -162,6 +163,7 @@ async function bootstrap(): Promise<void> {
     changes,
     references,
     attachments,
+    media,
     settings,
     tools
   })
@@ -203,9 +205,35 @@ async function bootstrap(): Promise<void> {
   })
 
   ;(globalThis as { __moyeDocuments?: DocumentService }).__moyeDocuments = documents
+  const updates = new UpdateService(settings, (state) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.events.updateChanged, state)
+  })
+  const prepareUpdate = async (): Promise<void> => {
+    await documents.preserveUpdateSession(app.getVersion())
+    await persistOpenFiles()
+  }
+  const onQuitForUpdate = (event: Electron.Event): void => {
+    if (!updates.readyForAutomaticInstall || !mainWindow || mainWindow.isDestroyed()) return
+    event.preventDefault()
+    void updates.install(prepareUpdate, false).catch((error) => {
+      closeState.allow = false
+      mainWindow?.webContents.send(IPC.events.toast, { tone: 'error', message: (error as Error).message })
+    })
+  }
+  app.on('before-quit', onQuitForUpdate)
+  const initialUpdateCheck = setTimeout(() => void updates.check(), 8000)
+  const periodicUpdateCheck = setInterval(() => void updates.check(), 6 * 60 * 60 * 1000)
+  mainWindow.once('closed', () => {
+    clearTimeout(initialUpdateCheck)
+    clearInterval(periodicUpdateCheck)
+    app.removeListener('before-quit', onQuitForUpdate)
+  })
+
   const context: IpcContext = {
     window: mainWindow,
     settings,
+    updates,
+    installUpdate: () => updates.install(prepareUpdate, true),
     secrets,
     providers,
     workspace,
@@ -388,11 +416,11 @@ async function bootstrapWorkspace(
     await settings.rememberWorkspace(demo)
   }
 
-  let restored = 0
-  if (settings.get().appBehavior.restoreSession) {
-    for (const path of settings.get().openFiles.slice(0, 8)) {
+  let restored = await documents.restoreUpdateSession(app.getVersion())
+  if (!restored && settings.get().appBehavior.restoreSession) {
+    for (const path of settings.get().openFiles) {
       if (!(await pathExists(path))) continue
-      if (!/\.(md|markdown|txt)$/i.test(path)) continue
+      if (!/\.(md|markdown|mdx|txt)$/i.test(path)) continue
       try {
         await documents.openPath(path, true)
         restored += 1

@@ -50,6 +50,7 @@ interface RecoveryFile {
   hasBom: boolean
   savedAt: number
   revision: number
+  diskFingerprint?: string | null
 }
 
 /** 维护文稿会话、版本同步、保存冲突、图片资产和未保存草稿恢复。 */
@@ -556,13 +557,13 @@ export class DocumentService {
     if (existing) clearTimeout(existing)
     const timer = setTimeout(() => {
       this.recoveryTimers.delete(session.documentId)
-      void this.writeRecovery(session)
+      void this.writeRecovery(session).catch(() => undefined)
     }, 700)
     this.recoveryTimers.set(session.documentId, timer)
   }
 
-  private async writeRecovery(session: DocumentSession): Promise<void> {
-    if (!session.dirty) return
+  private async writeRecovery(session: DocumentSession, includeClean = false): Promise<void> {
+    if (!session.dirty && !includeClean) return
     const payload: RecoveryFile = {
       documentId: session.documentId,
       title: session.title,
@@ -573,12 +574,58 @@ export class DocumentService {
       eol: session.eol,
       hasBom: session.hasBom,
       savedAt: Date.now(),
-      revision: session.revision
+      revision: session.revision,
+      diskFingerprint: session.diskFingerprint
     }
     await atomicWriteFile(
       join(appPaths().sessionsDir, `${session.documentId}.json`),
       JSON.stringify(payload)
-    ).catch(() => undefined)
+    )
+  }
+
+  async preserveUpdateSession(version: string): Promise<void> {
+    const entries = await Promise.all(this.listOpen().map(async ({ documentId }) => {
+      const session = this.getSession(documentId)
+      const response = await this.bridge.sync(documentId)
+      if (!response?.ok) {
+        throw new AppError('SAVE_FAILED', '无法读取更新前的文稿缓冲区。')
+      }
+      if (typeof response.text === 'string') session.applyText(response.text)
+      if (!session.dirty && session.absPath) return { path: session.absPath }
+      const timer = this.recoveryTimers.get(documentId)
+      if (timer) clearTimeout(timer)
+      this.recoveryTimers.delete(documentId)
+      await this.writeRecovery(session, true)
+      return { recoveryId: documentId }
+    }))
+    await atomicWriteFile(join(appPaths().sessionsDir, 'update-session'), JSON.stringify({ version, entries }))
+  }
+
+  async restoreUpdateSession(version: string): Promise<number> {
+    const path = join(appPaths().sessionsDir, 'update-session')
+    const raw = await readFile(path, 'utf8').catch(() => null)
+    if (!raw) return 0
+    let restored = 0
+    try {
+      const state = JSON.parse(raw) as { version: string; entries: Array<{ path?: string; recoveryId?: string }> }
+      if (state.version === version) return 0
+      for (const entry of state.entries.slice(0, MAX_OPEN_DOCUMENTS)) {
+        try {
+          if (entry.recoveryId && /^doc_[a-f0-9]{16}$/.test(entry.recoveryId)) {
+            await this.recoveryRestore(entry.recoveryId)
+          } else if (entry.path) {
+            await this.openPath(entry.path, true)
+          } else continue
+          restored++
+        } catch (error) {
+          logger.warn('documents', '恢复更新前的文稿失败', { message: String(error) })
+        }
+      }
+    } catch (error) {
+      logger.warn('documents', '更新会话快照无法读取', { message: String(error) })
+    }
+    await unlink(path).catch(() => undefined)
+    return restored
   }
 
   private async clearRecovery(documentId: string): Promise<void> {
@@ -636,7 +683,7 @@ export class DocumentService {
       text: parsed.text,
       eol: parsed.eol,
       hasBom: parsed.hasBom,
-      diskFingerprint: disk?.fingerprint ?? null,
+      diskFingerprint: parsed.diskFingerprint === undefined ? (disk?.fingerprint ?? null) : parsed.diskFingerprint,
       existsOnDisk: Boolean(disk),
       attached: true
     })

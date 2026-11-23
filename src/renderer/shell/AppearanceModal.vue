@@ -7,12 +7,29 @@ import type { ThemeCompatibilityReport, ThemeMode } from '@shared/types'
 import { useSettingsStore } from '../stores/settings'
 import { useUiStore } from '../stores/ui'
 import Icon from '../components/Icon.vue'
+import SettingSelect from '../components/SettingSelect.vue'
 
 const settings = useSettingsStore()
 const ui = useUiStore()
 const importReport = ref<ThemeCompatibilityReport | null>(null)
 const importedThemeId = ref<string | null>(null)
 const importing = ref(false)
+
+const fontOptions = [
+  { value: 'sans', label: '默认无衬线' }, { value: 'serif', label: '默认衬线' },
+  { value: 'mono', label: '等宽' }, { value: 'yahei', label: '微软雅黑' },
+  { value: 'simsun', label: '宋体' }, { value: 'kaiti', label: '楷体' },
+  { value: 'simhei', label: '黑体' }, { value: 'fangsong', label: '仿宋' }
+] satisfies Array<{ value: typeof typography.value.fontFamily; label: string }>
+
+const closeOptions = [
+  { value: 'ask', label: '每次询问' }, { value: 'tray', label: '最小化到托盘' }, { value: 'quit', label: '退出程序' }
+] satisfies Array<{ value: typeof behaviorSettings.value.closeAction; label: string }>
+
+const pageSizeOptions = [
+  { value: 'A4', label: 'A4' },
+  { value: 'Letter', label: 'Letter' }
+] satisfies Array<{ value: typeof exportSettings.value.pageSize; label: string }>
 
 const themeModes: Array<{ value: ThemeMode; label: string; className: string }> = [
   { value: 'light', label: '浅色', className: 'light-mini' },
@@ -95,7 +112,7 @@ async function chooseCacheDir(): Promise<void> {
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="ui.modal = null">
+  <div class="modal-backdrop appearance-backdrop" @click.self="ui.modal = null">
     <section class="modal" role="dialog" aria-modal="true" aria-label="外观与设置">
       <div class="modal-title">
         <div>
@@ -103,7 +120,7 @@ async function chooseCacheDir(): Promise<void> {
           <h2>你的写作，你的风格</h2>
           <p>舒适的界面，配上你熟悉的文稿样式。</p>
         </div>
-        <button class="iconbtn" aria-label="关闭" @click="ui.modal = null">
+        <button type="button" class="iconbtn modal-close" aria-label="关闭" @click.stop="ui.modal = null">
           <Icon name="x" :size="15" />
         </button>
       </div>
@@ -187,17 +204,8 @@ async function chooseCacheDir(): Promise<void> {
       <div class="setting-grid">
         <div class="field">
           <label for="body-font">正文字体</label>
-          <select id="body-font" :value="typography.fontFamily"
-            @change="patchTypography({ fontFamily: ($event.target as HTMLSelectElement).value as typeof typography.fontFamily })">
-            <option value="sans">默认无衬线</option>
-            <option value="serif">默认衬线</option>
-            <option value="mono">等宽</option>
-            <option value="yahei">微软雅黑</option>
-            <option value="simsun">宋体</option>
-            <option value="kaiti">楷体</option>
-            <option value="simhei">黑体</option>
-            <option value="fangsong">仿宋</option>
-          </select>
+          <SettingSelect id="body-font" :model-value="typography.fontFamily" :options="fontOptions"
+            @update:model-value="patchTypography({ fontFamily: $event })" />
         </div>
         <div class="field">
           <label>字号 {{ typography.fontSize }}px</label>
@@ -299,19 +307,9 @@ async function chooseCacheDir(): Promise<void> {
       <div class="settings-label">启动与关闭<span>托盘、退出与上次文稿恢复</span></div>
       <div class="setting-grid">
         <div class="field">
-          <label>关闭窗口时</label>
-          <select
-            :value="behaviorSettings.closeAction"
-            @change="
-              patchBehavior({
-                closeAction: ($event.target as HTMLSelectElement).value as 'ask' | 'tray' | 'quit'
-              })
-            "
-          >
-            <option value="ask">每次询问</option>
-            <option value="tray">最小化到托盘</option>
-            <option value="quit">退出程序</option>
-          </select>
+          <label for="close-action">关闭窗口时</label>
+          <SettingSelect id="close-action" :model-value="behaviorSettings.closeAction" :options="closeOptions"
+            @update:model-value="patchBehavior({ closeAction: $event })" />
           <small class="field-hint">选择“每次询问”时，可在弹窗里勾选不再提示</small>
         </div>
         <div class="field">
@@ -327,6 +325,13 @@ async function chooseCacheDir(): Promise<void> {
           <small class="field-hint">文件已不存在时打开示例文稿</small>
         </div>
       </div>
+
+      <div class="settings-label">软件更新</div>
+      <label class="checkbox">
+        <input type="checkbox" :checked="behaviorSettings.autoUpdate"
+          @change="patchBehavior({ autoUpdate: ($event.target as HTMLInputElement).checked })" />
+        自动下载更新，并在退出应用后安装
+      </label>
 
       <div class="settings-label">资源与缓存<span>图片默认跟随文稿保存，换电脑也能打开</span></div>
       <div class="setting-grid">
@@ -361,14 +366,13 @@ async function chooseCacheDir(): Promise<void> {
       <div class="settings-label">导出<span>PDF 使用 Chromium 打印，其他格式需要 Pandoc</span></div>
       <div class="setting-grid">
         <div class="field">
-          <label>PDF 纸张</label>
-          <select
-            :value="exportSettings.pageSize"
-            @change="patchExport({ pageSize: ($event.target as HTMLSelectElement).value as 'A4' | 'Letter' })"
-          >
-            <option value="A4">A4</option>
-            <option value="Letter">Letter</option>
-          </select>
+          <label for="pdf-page-size">PDF 纸张</label>
+          <SettingSelect
+            id="pdf-page-size"
+            :model-value="exportSettings.pageSize"
+            :options="pageSizeOptions"
+            @update:model-value="patchExport({ pageSize: $event })"
+          />
         </div>
         <div class="field">
           <label>页边距 {{ exportSettings.marginMm }}mm</label>
@@ -419,6 +423,9 @@ async function chooseCacheDir(): Promise<void> {
 </template>
 
 <style scoped>
+.appearance-backdrop, .modal-close { -webkit-app-region: no-drag; }
+.modal-close { flex: 0 0 28px; position: relative; z-index: 3; }
+
 .field-inline {
   display: flex;
   align-items: center;

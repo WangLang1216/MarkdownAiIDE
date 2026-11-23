@@ -9,15 +9,19 @@ import katex from 'katex'
 import { resolveImageSrc, renderInlineMarkdown, renderMermaidToSvg } from '../lib/markdown'
 import { highlightCode } from '../lib/highlight'
 
+function spacedBlock(content: HTMLElement): HTMLElement {
+  const block = document.createElement('div')
+  block.className = 'cm-widget-spaced-block'
+  block.append(content)
+  return block
+}
+
 interface ImageSpec {
   documentId: string | null
   raw: string
   alt: string
   block: boolean
   loadRemote: boolean
-  sourcePos?: number
-  /** 页面锁定：禁用「点击回到源码」 */
-  locked?: boolean
 }
 
 /** 用图片节点替代未编辑的图片语法，并提供失效时的回退显示。 */
@@ -37,14 +41,12 @@ export class ImageWidget extends WidgetType {
       a.alt === b.alt &&
       a.block === b.block &&
       a.documentId === b.documentId &&
-      a.loadRemote === b.loadRemote &&
-      a.sourcePos === b.sourcePos &&
-      a.locked === b.locked
+      a.loadRemote === b.loadRemote
     )
   }
 
   /** 构造当前 Markdown 装饰对应的浏览器节点。 */
-  override toDOM(view: EditorView): HTMLElement {
+  override toDOM(): HTMLElement {
     const wrap = document.createElement(this.spec.block ? 'div' : 'span')
     wrap.className = 'cm-widget-image'
     const resolved = resolveImageSrc(this.spec.raw, {
@@ -62,6 +64,8 @@ export class ImageWidget extends WidgetType {
       const img = document.createElement('img')
       img.src = resolved
       img.alt = this.spec.alt
+      img.tabIndex = 0
+      img.title = '放大图片'
       img.loading = 'lazy'
       img.addEventListener('error', () => {
         const broken = document.createElement('span')
@@ -76,13 +80,6 @@ export class ImageWidget extends WidgetType {
         caption.textContent = this.spec.alt
         wrap.append(caption)
       }
-    }
-    if (this.spec.block && typeof this.spec.sourcePos === 'number' && !this.spec.locked) {
-      wrap.addEventListener('click', () => {
-        const pos = Math.min(this.spec.sourcePos!, view.state.doc.length)
-        view.dispatch({ selection: EditorSelection.cursor(pos), scrollIntoView: true })
-        view.focus()
-      })
     }
     return wrap
   }
@@ -199,7 +196,7 @@ export class TableWidget extends WidgetType {
         view.focus()
       })
     }
-    return wrap
+    return spacedBlock(wrap)
   }
 
   /** 向 CodeMirror 声明是否忽略属于当前装饰的事件。 */
@@ -271,7 +268,7 @@ export class CodeBlockWidget extends WidgetType {
         view.focus()
       })
     }
-    return wrap
+    return spacedBlock(wrap)
   }
 
   /** 向 CodeMirror 声明是否忽略属于当前装饰的事件。 */
@@ -520,7 +517,7 @@ export class TocWidget extends WidgetType {
       empty.className = 'toc-empty'
       empty.textContent = '还没有标题，写下 ## 二级标题后这里会自动生成。'
       wrap.append(empty)
-      return wrap
+      return spacedBlock(wrap)
     }
     const list = document.createElement('ul')
     for (const entry of this.entries) {
@@ -532,19 +529,13 @@ export class TocWidget extends WidgetType {
       link.addEventListener('click', (event) => {
         event.preventDefault()
         event.stopPropagation()
-        const pos = Math.min(entry.pos, view.state.doc.length)
-        if (this.locked) {
-          view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'start' }) })
-          return
-        }
-        view.dispatch({ selection: EditorSelection.cursor(pos), scrollIntoView: true })
-        view.focus()
+        view.dom.dispatchEvent(new CustomEvent('moye-outline-jump', { bubbles: true, detail: entry.pos }))
       })
       item.append(link)
       list.append(item)
     }
     wrap.append(list)
-    return wrap
+    return spacedBlock(wrap)
   }
 
   /** 向 CodeMirror 声明是否忽略属于当前装饰的事件。 */

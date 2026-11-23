@@ -33,6 +33,7 @@ import type { DocumentService } from '../documents/service'
 import type { WorkspaceService } from '../workspace/service'
 import type { ChangeService } from '../changes/service'
 import type { ReferenceService, ContextBundle } from '../references/service'
+import type { MediaService } from '../media'
 import type { AttachmentService } from '../attachments/service'
 import type { SettingsStore } from '../settings/store'
 
@@ -66,6 +67,7 @@ interface Deps {
   changes: ChangeService
   references: ReferenceService
   attachments: AttachmentService
+  media: MediaService
   settings: SettingsStore
   tools: AgentTools
 }
@@ -319,10 +321,17 @@ export class AgentController {
         : null
 
     const images: string[] = []
+    let documentImageCount = 0
     if (visionAvailable) {
       for (const attachment of attachments.slice(0, 4)) {
         const dataUrl = await this.deps.attachments.dataUrl(attachment.attachmentId)
         if (dataUrl) images.push(dataUrl)
+      }
+      if (activeDocument) {
+        const imageText = input.scope === 'selection' ? (selection?.text ?? '') : activeDocument.text
+        const documentImages = await this.deps.media.documentVisionImages(activeDocument.documentId, imageText, 4)
+        documentImageCount = documentImages.length
+        images.push(...documentImages)
       }
     }
 
@@ -334,6 +343,7 @@ export class AgentController {
       selection,
       attachments: attachments.map((item) => ({ name: item.name, mime: item.mime })),
       visionAvailable,
+      documentImageCount,
       toolCalling,
       sources: citationBundle,
       approvalMode: record.approvalMode,

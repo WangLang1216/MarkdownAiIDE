@@ -5,12 +5,14 @@
 import { computed } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import { useUiStore } from '../stores/ui'
+import { useUpdatesStore } from '../stores/updates'
 import Icon from '../components/Icon.vue'
 
 const settings = useSettingsStore()
 const ui = useUiStore()
+const updates = useUpdatesStore()
 
-const version = computed(() => settings.appInfo?.version ?? '1.0.0')
+const version = computed(() => settings.appInfo?.version ?? '…')
 const iconDataUrl = computed(() => settings.appInfo?.iconDataUrl ?? null)
 const repository = 'https://github.com/WangLang1216/MarkdownAiIDE'
 
@@ -58,7 +60,10 @@ function openRepository(): void {
 
       <div class="about-links">
         <button class="ghostbtn" @click="openRepository">
-          <Icon name="external-link" :size="13" />{{ repository }}
+          <Icon name="external-link" :size="13" />GitHub 仓库
+        </button>
+        <button type="button" class="ghostbtn" @click="updates.check()">
+          <Icon name="download" :size="13" />检查新版本
         </button>
         <button class="ghostbtn" @click="ui.modal = 'shortcuts'">
           <Icon name="info" :size="13" />快捷键与使用提示

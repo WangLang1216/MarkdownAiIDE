@@ -1,3 +1,4 @@
+import type { UpdateState } from './update'
 /**
  * IPC 契约：通道常量与 DesktopAPI 类型。
  * 渲染进程只能通过 preload 暴露的这些方法访问本地能力。
@@ -48,6 +49,7 @@ import type { ErrorCode } from './errors'
 
 /** 集中定义预加载层和主进程共同使用的 IPC 通道名。 */
 export const IPC = {
+  update: { state: 'update:state', check: 'update:check', download: 'update:download', install: 'update:install' },
   app: {
     info: 'app:info',
     openExternal: 'app:open-external',
@@ -135,6 +137,7 @@ export const IPC = {
     list: 'references:list',
     remove: 'references:remove',
     preview: 'references:preview',
+    previewPdf: 'references:preview-pdf',
     setRoles: 'references:set-roles'
   },
   styles: {
@@ -167,6 +170,7 @@ export const IPC = {
     response: 'bridge:editor-response'
   },
   events: {
+    updateChanged: 'event:update-changed',
     agent: 'event:agent',
     workspaceChanged: 'event:workspace-changed',
     documentChanged: 'event:document-changed',
@@ -301,6 +305,12 @@ export interface ImportThemeResult {
 
 /** 定义预加载层暴露给渲染进程的类型化桌面能力与事件订阅接口。 */
 export interface DesktopAPI {
+  update: {
+    state(): Promise<UpdateState>
+    check(): Promise<UpdateState>
+    download(): Promise<UpdateState>
+    install(): Promise<void>
+  }
   /** 窗口生命周期、运行环境、系统选择器与剪贴板能力。 */
   app: {
     info(): Promise<AppInfo>
@@ -413,7 +423,8 @@ export interface DesktopAPI {
     addFromBytes(name: string, bytes: ArrayBuffer): Promise<SourceAsset>
     list(): Promise<SourceAsset[]>
     remove(sourceId: string): Promise<void>
-    preview(sourceId: string): Promise<SourcePreviewChunk[]>
+    preview(sourceId: string, offset?: number): Promise<SourcePreviewChunk[]>
+    previewPdf(sourceId: string): Promise<Uint8Array | null>
     setRoles(sourceId: string, roles: AddSourceInput['roles']): Promise<SourceAsset>
   }
   /** 写作风格配置维护能力。 */
@@ -472,6 +483,7 @@ export interface DesktopAPI {
     workspaceChanged(listener: (event: Extract<AppEvent, { type: 'workspace-changed' }>) => void): () => void
     documentChanged(listener: (event: Extract<AppEvent, { type: 'document-changed' }>) => void): () => void
     documentConflict(listener: (event: Extract<AppEvent, { type: 'document-conflict' }>) => void): () => void
+    updateChanged(listener: (state: UpdateState) => void): () => void
     settingsChanged(listener: (settings: AppSettings) => void): () => void
     documentOpened(listener: (snapshot: DocumentSnapshot) => void): () => void
     closeRequested(listener: () => void): () => void

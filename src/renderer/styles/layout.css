@@ -1947,3 +1947,13 @@ body.split-resizing .cm-content {
     padding-right: 12px;
   }
 }
+
+
+.menubar .update-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent-strong);
+  background: var(--selection);
+  white-space: nowrap;
+}

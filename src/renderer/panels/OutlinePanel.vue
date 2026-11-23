@@ -3,11 +3,10 @@
  * 右侧目录：标题树、当前章节高亮、定位、阅读进度与折叠。
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { countText, parseOutline } from '@shared/markdown/outline'
+import { countText, parseOutline, parseSections } from '@shared/markdown/outline'
 import type { OutlineNode } from '@shared/types'
 import { useDocumentsStore } from '../stores/documents'
 import { useUiStore } from '../stores/ui'
-import { editorApi } from '../lib/editorApi'
 import Icon from '../components/Icon.vue'
 
 const documents = useDocumentsStore()
@@ -59,7 +58,9 @@ const h2Numbering = computed(() => {
 const progress = computed(() => Math.round(ui.scrollRatio * 100))
 
 function jump(node: OutlineNode): void {
-  editorApi.current?.revealOffset(node.from)
+  ui.cursorOffset = node.from
+  const section = parseSections(documents.activeText).find((item) => item.headingStart === node.from)
+  ui.outlineJump = { from: node.from, to: section?.sectionEnd ?? node.to }
 }
 
 function hide(): void {

@@ -4,7 +4,7 @@
  */
 
 import { isAbsolute, resolve } from 'node:path'
-import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import { IPC } from '@shared/ipc'
 import type { NewDocumentInput, StyleProfileInput } from '@shared/ipc'
 import type {
@@ -23,6 +23,7 @@ import { isPathInside } from '../utils/fs'
 import { pathExists } from '../utils/fs'
 import { appPaths, configureCacheDir } from '../utils/paths'
 import { appIconDataUrl } from '../app/icon'
+import type { UpdateService } from '../app/updates'
 import type { SettingsStore } from '../settings/store'
 import type { SecretService } from '../secrets/service'
 import type { ProviderService } from '../providers/service'
@@ -45,6 +46,8 @@ export interface IpcContext {
   /** 提供当前主窗口，供 IPC 请求来源校验与事件发送使用。 */
   window: BrowserWindow
   settings: SettingsStore
+  updates: UpdateService
+  installUpdate(): Promise<void>
   /** 仅主进程可用的密钥服务，用于报告加密后端状态。 */
   secrets: SecretService
   providers: ProviderService
@@ -124,7 +127,7 @@ export function registerIpc(context: IpcContext): void {
     const pandoc = await context.exports.pandocStatus()
     const demoExists = await pathExists(appPaths().demoWorkspace)
     return {
-      version: '1.0.0',
+      version: app.getVersion(),
       electron: process.versions.electron,
       chrome: process.versions.chrome,
       node: process.versions.node,
@@ -137,6 +140,11 @@ export function registerIpc(context: IpcContext): void {
       iconDataUrl: await appIconDataUrl()
     }
   })
+
+  handle(IPC.update.state, () => context.updates.snapshot)
+  handle(IPC.update.check, () => context.updates.check())
+  handle(IPC.update.download, () => context.updates.download())
+  handle(IPC.update.install, () => context.installUpdate())
 
   handle<void>(IPC.app.openExternal, async (url) => {
     const value = asString(url, '链接')
@@ -483,8 +491,12 @@ export function registerIpc(context: IpcContext): void {
   })
   handle(IPC.references.list, async () => context.references.list())
   handle(IPC.references.remove, async (sourceId) => context.references.remove(asString(sourceId, '来源 ID')))
-  handle(IPC.references.preview, async (sourceId) =>
-    context.references.preview(asString(sourceId, '来源 ID'))
+  handle(IPC.references.preview, async (sourceId, offset) =>
+    context.references.preview(asString(sourceId, '来源 ID'),
+      typeof offset === 'number' && Number.isSafeInteger(offset) ? Math.max(0, offset) : 0)
+  )
+  handle(IPC.references.previewPdf, async (sourceId) =>
+    context.references.previewPdf(asString(sourceId, '来源 ID'))
   )
   handle(IPC.references.setRoles, async (sourceId, roles) => {
     const value = Array.isArray(roles) ? roles : []

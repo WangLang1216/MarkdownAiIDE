@@ -4,6 +4,7 @@
 
 import tokensCss from '../styles/tokens.css?raw'
 import markdownCss from '../styles/markdown.css?raw'
+import printCss from '../styles/print.css?raw'
 import katexCss from 'katex/dist/katex.min.css?raw'
 import { escapeHtml, renderForExport } from './markdown'
 
@@ -31,15 +32,6 @@ export interface BuildHtmlOptions {
   inlineImages: (urls: string[]) => Promise<Record<string, string>>
 }
 
-const PRINT_CSS = `
-@page { margin: 0; }
-html, body { background: #fff; }
-body { margin: 0; }
-.markdown-body { padding: 0; max-width: none; }
-pre, table, img, .mermaid-block { break-inside: avoid; }
-h1, h2, h3 { break-after: avoid; }
-`
-
 function collectLocalImages(html: string): string[] {
   const urls = new Set<string>()
   const pattern = /src="(mdres:\/\/[^"]+)"/g
@@ -66,9 +58,9 @@ export async function buildExportHtml(options: BuildHtmlOptions): Promise<string
 
   const scopeAttr = options.themeScope ? ` data-doc-theme="${escapeHtml(options.themeScope)}"` : ''
   const baseCss = options.styled
-    ? `:root { color-scheme: light; }\n${tokensCss}\n${markdownCss}\n${katexCss}\n${PRINT_CSS}\n${
+    ? `:root { color-scheme: light; }\n${tokensCss}\n${markdownCss}\n${katexCss}\n${
         options.includeTheme ? options.themeCss : ''
-      }`
+      }\n${printCss}`
     : `body{margin:0;padding:32px;font:14px/1.8 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;color:#282b2f}
        img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #ddd;padding:6px}pre{overflow:auto;background:#f5f6f5;padding:12px}
        @media print{body{padding:0}}`

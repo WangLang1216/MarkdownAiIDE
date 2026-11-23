@@ -62,7 +62,41 @@ export const MODULE_SNIPPETS: SnippetDefinition[] = [
     id: 'prompt-template',
     label: '提示词模板',
     description: '目标、上下文和输出要求',
-    markdown: '## 目标\n\n## 上下文\n\n## 约束与要求\n\n## 输出格式\n\n## 验收标准'
+    markdown: `# 提示词模板
+
+## 角色与任务
+- 角色：[需要的专业能力、职责和视角]
+- 目标：[用一句话说明要完成什么]
+- 交付物：[列出最终文件、格式或可执行结果]
+
+## 背景与输入
+- 使用场景和目标读者：[谁会用，如何使用]
+- 已知事实与术语：[列出必要背景]
+- 参考资料：[粘贴正文，或列出附件及优先级]
+- 可用工具与授权范围：[允许读取、修改或查询的内容]
+
+## 执行要求
+1. 根据资料完成任务，优先满足明确的硬性要求。
+2. 如果缺少会影响结果的关键信息，先提出具体问题；其余情况标明采用的假设。
+3. 事实性结论标明出处，资料不足时标记“待核实”。保留原文中的专名和数据。
+4. 多项要求冲突时，说明取舍并遵循：[优先级]。
+
+## 输出规格
+- 语言、语气和长度：[例如简体中文、专业简洁、600 字以内]
+- 格式与结构：[列出标题、表格列、字段类型或示例]
+- 必须包含：[事项与数量]
+- 排除项：[敏感信息、无关内容或禁止操作]
+
+## 示例
+- 示例输入：[一个典型样例]
+- 期望输出：[展示结构与细节程度]
+- 边界情况：[遇到缺失值、矛盾或例外时如何处理]
+
+## 验收标准
+- [ ] 交付物完整，满足输出格式和长度要求
+- [ ] 数据、名称、引用与原资料一致
+- [ ] 不确定项和未完成项明确标出
+- [ ] 输出可直接用于目标场景`
   },
   {
     id: 'text-to-image-template',
@@ -93,7 +127,14 @@ export const MODULE_SNIPPETS: SnippetDefinition[] = [
     label: '周报',
     description: '本周成果和下周计划',
     markdown: '## 周报\n\n- 周期：\n\n### 本周成果\n\n### 风险与待办\n\n### 下周计划'
-  },
+  }
+]
+
+/**
+ * 扩展语法元素：高亮、上下标、标题锚点、定义列表、目录与表情。
+ * 语法对齐 Markdown 速查表与中文扩展语法教程，插入后在预览和导出中直接成稿。
+ */
+export const EXTENDED_SNIPPETS: SnippetDefinition[] = [
   {
     id: 'callout',
     label: '提示块',
@@ -120,14 +161,7 @@ export const MODULE_SNIPPETS: SnippetDefinition[] = [
     description: '为正文补充来源',
     markdown: '正文中的引用[^1]\n\n[^1]: 在这里写脚注内容。',
     cursorBack: 9
-  }
-]
-
-/**
- * 扩展语法元素：高亮、上下标、标题锚点、定义列表、目录与表情。
- * 语法对齐 Markdown 速查表与中文扩展语法教程，插入后在预览和导出中直接成稿。
- */
-export const EXTENDED_SNIPPETS: SnippetDefinition[] = [
+  },
   {
     id: 'mark',
     label: '高亮',
@@ -227,6 +261,12 @@ try {
 export function importContentTemplate(label: string, markdown: string): void {
   const template = { id: 'imported-' + crypto.randomUUID(), label, markdown, description: '已导入' }
   const next = [...importedTemplates.value, template]
+  localStorage.setItem(templateKey, JSON.stringify(next))
+  importedTemplates.value = next
+}
+
+export function deleteContentTemplate(id: string): void {
+  const next = importedTemplates.value.filter((template) => template.id !== id)
   localStorage.setItem(templateKey, JSON.stringify(next))
   importedTemplates.value = next
 }
