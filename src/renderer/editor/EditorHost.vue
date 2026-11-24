@@ -331,14 +331,14 @@ async function runMenuAction(action: ContextAction): Promise<void> {
       }
       const range = editor.getSelection()
       const text = editor.getText().slice(range.from, range.to)
-      if (text) await navigator.clipboard.writeText(text).catch(() => undefined)
+      if (text) await window.api.app.writeClipboardText(text).catch(() => undefined)
       break
     }
     case 'cut': {
       const range = editor.getSelection()
       const text = editor.getText().slice(range.from, range.to)
       if (text) {
-        await navigator.clipboard.writeText(text).catch(() => undefined)
+        await window.api.app.writeClipboardText(text).catch(() => undefined)
         editor.applyEdits([{ from: range.from, to: range.to, insert: '' }])
       }
       break

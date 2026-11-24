@@ -79,6 +79,9 @@ const emptyTask = (): TaskView => ({
   applied: null
 })
 
+/** 随消息发送的选中内容上限，避免超长选区挤占模型上下文 */
+const SELECTION_CONTEXT_LIMIT = 6000
+
 /** 维护渲染端任务视图，接收 Agent 事件并驱动任务交互。 */
 export const useAgentStore = defineStore('agent', () => {
   const providers = ref<ProviderConfig[]>([])
@@ -159,6 +162,8 @@ export const useAgentStore = defineStore('agent', () => {
   })
   const scope = ref<StartTaskInput['scope']>('auto')
   const mode = ref<'edit' | 'ask'>('edit')
+  /** 发送时是否把编辑器里选中的文字一起交给模型作为上下文 */
+  const quoteSelection = ref(true)
   const predicting = ref(false)
   /** 自动预测失败时的最近一次提示时间，避免频繁打扰 */
   let lastAutoWarnAt = 0
@@ -247,6 +252,16 @@ export const useAgentStore = defineStore('agent', () => {
       ui.toast('请先选中需要修改的内容', 'warning')
       return
     }
+    // "选中部分"是改写目标，不需要再作为上下文重复喂给模型
+    const quoted =
+      !useSelection && quoteSelection.value && selection && selection.from !== selection.to
+        ? (editorApi.current?.getText() ?? '').slice(selection.from, selection.to)
+        : ''
+    const contextualPrompt = quoted
+      ? `${text}\n\n【我在文档中选中的原文，请以此为准】\n${quoted.slice(0, SELECTION_CONTEXT_LIMIT)}${
+          quoted.length > SELECTION_CONTEXT_LIMIT ? `\n……（选中内容共 ${quoted.length} 字，已截断）` : ''
+        }\n【选中原文结束】`
+      : text
     const previous = tasks[key]
     if (previous?.taskId) taskKeys.delete(previous.taskId)
     try {
@@ -262,7 +277,7 @@ export const useAgentStore = defineStore('agent', () => {
       if (doc) await documents.flush(doc.snapshot.documentId)
       const result = await window.api.agent.start({
         documentId: id,
-        prompt: text,
+        prompt: contextualPrompt,
         scope: selectedScope,
         ...(useSelection ? { selection: { from: selection!.from, to: selection!.to } } : {}),
         providerId,
@@ -645,6 +660,7 @@ export const useAgentStore = defineStore('agent', () => {
     prompt,
     scope,
     mode,
+    quoteSelection,
     isRunning,
     predicting,
     previewSource,

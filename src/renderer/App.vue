@@ -239,9 +239,15 @@ onBeforeUnmount(() => {
 
 .recovery-banner {
   position: fixed;
-  top: 60px;
-  left: 50%;
-  transform: translateX(-50%);
+  /* 必须落在 .editor-toolbar 下方：工具栏整条是 -webkit-app-region: drag 的窗口拖拽区，
+     提示条一旦压上去，鼠标事件会被窗口拖拽吃掉，整块按钮都点不动 */
+  top: calc(var(--topbar-height) + var(--toolbar-height) + 8px);
+  /* 用左右 0 + 自动外边距居中，不用 translateX(-50%)：
+     带 transform 的浮层会让 Electron 的可拖拽区域与命中区域对不齐 */
+  left: 0;
+  right: 0;
+  width: fit-content;
+  margin: 0 auto;
   z-index: 55;
   display: flex;
   align-items: center;
@@ -255,6 +261,14 @@ onBeforeUnmount(() => {
   color: var(--soft);
   max-width: calc(100vw - 80px);
   flex-wrap: wrap;
+  /* 浮层落在 .editor-toolbar 的 -webkit-app-region: drag 区域内，
+     不显式声明 no-drag 的话鼠标事件会被窗口拖拽吃掉，按钮点不动 */
+  -webkit-app-region: no-drag;
+}
+
+/* 专注模式隐藏了顶部栏，工具栏顶到窗口最上面，提示条跟着上移 */
+.app-focus .recovery-banner {
+  top: calc(var(--toolbar-height) + 8px);
 }
 
 .recovery-action {

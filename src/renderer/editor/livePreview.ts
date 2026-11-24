@@ -468,6 +468,30 @@ function inlineDecorations(text: string, context: InlineContext): void {
     addHide(context, start + 1 + match[1].length, end)
   }
 
+  // <https://…> 自动链接：与预览的 linkify 对齐，去掉尖括号只留蓝色链接文字
+  for (const match of text.matchAll(/<((?:https?:\/\/|mailto:)[^\s>]+)>/g)) {
+    const start = match.index ?? 0
+    const end = start + match[0].length
+    if (overlaps(masked, start, end)) continue
+    masked.push([start, end])
+    addMark(context, start + 1, end - 1, 'cm-md-link', { 'data-href': match[1] })
+    if (context.hideMarkers) {
+      addHide(context, start, start + 1)
+      addHide(context, end - 1, end)
+    }
+  }
+
+  // 裸链接（含 www.）同样按链接色显示，链接内已隐藏的 URL 不会被重复匹配
+  for (const match of text.matchAll(/(?:https?:\/\/|www\.)[^\s<>"'`）)】]+/g)) {
+    const start = match.index ?? 0
+    const raw = match[0].replace(/[.,;:!?、。，；：！？]+$/, '')
+    const end = start + raw.length
+    if (overlaps(masked, start, end)) continue
+    masked.push([start, end])
+    const href = raw.startsWith('www.') ? `https://${raw}` : raw
+    addMark(context, start, end, 'cm-md-link', { 'data-href': href })
+  }
+
   for (const pattern of [/\*\*([^*\n]+)\*\*/g, /__([^_\n]+)__/g]) {
     for (const match of text.matchAll(pattern)) {
       const start = match.index ?? 0
@@ -604,6 +628,9 @@ function buildInlineDecorations(view: EditorView, options: LivePreviewOptions): 
   const documentId = options.documentId()
   const loadRemote = options.loadRemoteImages()
   const locked = options.locked()
+  // 存在非空选区时不把光标行回退成源码：拖选多段时行首标记（## / - / > ）反复显隐，
+  // 会让行宽与换行位置在拖动过程中不断变化，高亮看起来就像"追不上"文字。
+  const selecting = state.selection.ranges.some((range) => !range.empty)
 
   const pushLine = (lineNo: number, className: string): void => {
     ranges.push(Decoration.line({ class: className }).range(doc.line(lineNo).from))
@@ -626,7 +653,7 @@ function buildInlineDecorations(view: EditorView, options: LivePreviewOptions): 
     ) {
       const line = doc.line(lineNo)
       // 锁定后所有行都按成稿显示标记隐藏，不随光标位置回退
-      const hideMarkers = locked || lineNo !== cursorLine
+      const hideMarkers = locked || selecting || lineNo !== cursorLine
       const context: InlineContext = { ranges, lineFrom: line.from, hideMarkers, documentId, loadRemote }
 
       switch (block.type) {

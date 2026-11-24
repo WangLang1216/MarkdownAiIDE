@@ -139,6 +139,7 @@ export const EXTENDED_SNIPPETS: SnippetDefinition[] = [
     id: 'callout',
     label: '提示块',
     description: '让重要内容更醒目',
+    glyph: '!',
     markdown: '> 提示：在这里记录重要的信息。'
   },
   {
@@ -152,6 +153,7 @@ export const EXTENDED_SNIPPETS: SnippetDefinition[] = [
     id: 'math',
     label: '数学公式',
     description: '支持 LaTeX 语法',
+    glyph: '∑',
     markdown: '$$\nE = mc^2\n$$',
     cursorBack: 3
   },
@@ -159,6 +161,7 @@ export const EXTENDED_SNIPPETS: SnippetDefinition[] = [
     id: 'footnote',
     label: '脚注',
     description: '为正文补充来源',
+    glyph: '¹',
     markdown: '正文中的引用[^1]\n\n[^1]: 在这里写脚注内容。',
     cursorBack: 9
   },

@@ -3,10 +3,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
 import type { SourceAsset, SourcePreviewChunk } from '@shared/types'
 import Icon from '../components/Icon.vue'
+import { useUiStore } from '../stores/ui'
 
 const props = defineProps<{ source: SourceAsset }>()
 defineEmits<{ close: []; remove: [] }>()
 
+const ui = useUiStore()
 const page = ref(1)
 const pageCount = ref(1)
 const chunks = ref<SourcePreviewChunk[]>([])
@@ -20,6 +22,7 @@ let pdf: PDFDocumentProxy | undefined
 let renderTask: RenderTask | undefined
 let closed = false
 
+const copying = ref(false)
 const spreadsheet = computed(() => /\.(xlsx|tsv)$/i.test(props.source.title))
 const json = computed(() => /\.json$/i.test(props.source.title))
 
@@ -28,6 +31,35 @@ function prettyJson(text: string): string {
     return JSON.stringify(JSON.parse(text), null, 2)
   } catch {
     return text
+  }
+}
+
+/** 把预览内容复制到剪贴板：PDF 取当前页的文字层，其余取已解析的片段 */
+async function copyPreviewText(): Promise<void> {
+  if (copying.value) return
+  copying.value = true
+  try {
+    let text = ''
+    if (pdfReady.value && pdf) {
+      const selected = await pdf.getPage(page.value)
+      const content = await selected.getTextContent()
+      text = content.items
+        .map((item) => ('str' in item ? item.str + (item.hasEOL ? '\n' : '') : ''))
+        .join('')
+        .trim()
+    } else {
+      text = chunks.value.map((chunk) => chunk.text).join('\n\n').trim()
+    }
+    if (!text) {
+      ui.toast('这一页没有可复制的文字', 'warning')
+      return
+    }
+    await window.api.app.writeClipboardText(text)
+    ui.toast(pdfReady.value ? `已复制第 ${page.value} 页文字` : '已复制预览文字', 'success')
+  } catch (error) {
+    ui.toast((error as Error).message || '复制失败', 'error')
+  } finally {
+    copying.value = false
   }
 }
 
@@ -136,6 +168,9 @@ onBeforeUnmount(() => {
       </div>
       <footer class="modal-footer">
         <button class="textbtn" @click="$emit('remove')">移除参考</button>
+        <button v-if="!busy && !error" class="textbtn" :disabled="copying" @click="copyPreviewText">
+          {{ pdfReady ? '复制本页文字' : '复制全文' }}
+        </button>
         <div v-if="pageCount > 1" class="attachment-pagination">
           <button class="ghostbtn" :disabled="busy || page <= 1" @click="showPage(page - 1)">上一页</button>
           <span>{{ page }} / {{ pageCount }}</span>
@@ -163,12 +198,17 @@ onBeforeUnmount(() => {
   flex: none;
 }
 .attachment-body {
+  /* 正文区域是可读内容，显式允许光标选中与复制 */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
   overflow: auto;
   min-height: 160px;
   max-height: 64vh;
   margin-top: 14px;
 }
 .attachment-body canvas {
+  cursor: default;
   max-width: 100%;
   display: block;
   margin: 0 auto;
@@ -184,7 +224,10 @@ onBeforeUnmount(() => {
   color: var(--soft);
 }
 .attachment-chunk p,
-.attachment-chunk pre {
+.attachment-chunk pre,
+.attachment-chunk td {
+  user-select: text;
+  -webkit-user-select: text;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 1.75;

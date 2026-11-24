@@ -8,7 +8,7 @@
 import MarkdownIt from 'markdown-it'
 import footnote from 'markdown-it-footnote'
 import katex from 'katex'
-import { hljs } from './highlight'
+import { hljs, resolveLanguage } from './highlight'
 import { emojiFor } from './emoji'
 import { definitionPrefixLength, findHeadingId, isTocLine, slugifyHeading } from '@shared/markdown/extended'
 import mermaid from 'mermaid'
@@ -349,9 +349,10 @@ md.renderer.rules.fence = (tokens, idx, _options, _env) => {
   }
   let highlighted: string
   let language = ''
-  if (info && hljs.getLanguage(info)) {
-    language = info
-    highlighted = hljs.highlight(code, { language: info, ignoreIllegals: true }).value
+  const resolved = info ? resolveLanguage(info) : ''
+  if (resolved && hljs.getLanguage(resolved)) {
+    language = resolved
+    highlighted = hljs.highlight(code, { language: resolved, ignoreIllegals: true }).value
   } else {
     highlighted = escapeHtml(code)
   }

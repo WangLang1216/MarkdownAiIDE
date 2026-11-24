@@ -134,13 +134,14 @@
 }
 
 .markdown-body a {
-  color: color-mix(in srgb, var(--accent) 85%, var(--text));
+  color: var(--link);
   text-decoration: none;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--link) 35%, transparent);
 }
 
 .markdown-body a:hover {
-  border-bottom-color: var(--accent);
+  color: var(--link-strong);
+  border-bottom-color: var(--link);
 }
 
 .markdown-body blockquote {
@@ -431,7 +432,8 @@
 
 .cm-selectionBackground,
 .cm-editor .cm-selectionBackground {
-  background: color-mix(in srgb, var(--selection) 80%, transparent) !important;
+  /* 用 accent 混合而不是 --selection 平铺：白底与代码块/引用块这类灰底上都能看清边界 */
+  background: color-mix(in srgb, var(--accent) 16%, transparent) !important;
 }
 
 .cm-cursor {
@@ -509,6 +511,9 @@
 }
 
 .cm-md-inline-code {
+  position: relative;
+  /* 和块级底色同理：留在 span 自身会盖住选区，压到 -10 后选区层（-2）在其之上 */
+  z-index: -10;
   font-family: var(--mono-font);
   font-size: 0.9em;
   background: var(--code);
@@ -518,12 +523,18 @@
 }
 
 .cm-md-link {
-  color: color-mix(in srgb, var(--accent) 85%, var(--text));
+  color: var(--link);
   text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--link) 40%, transparent);
+}
+
+.cm-md-link:hover {
+  color: var(--link-strong);
 }
 
 .cm-md-mark {
+  position: relative;
+  z-index: -10;
   background: color-mix(in srgb, #f0d489 58%, transparent);
   border-radius: 3px;
 }
@@ -548,7 +559,7 @@
 }
 
 .cm-md-quote {
-  background: var(--side);
+  --cm-line-bg: var(--side);
   border-left: 3px solid color-mix(in srgb, var(--accent) 30%, var(--line));
   padding-left: 14px !important;
   color: color-mix(in srgb, var(--soft) 88%, var(--muted));
@@ -597,24 +608,24 @@
 }
 
 .cm-md-table-source {
+  --cm-line-bg: color-mix(in srgb, var(--side) 60%, transparent);
   font-family: var(--mono-font);
   font-size: 12px;
   color: color-mix(in srgb, var(--text) 80%, var(--muted));
-  background: color-mix(in srgb, var(--side) 60%, transparent);
 }
 
 .cm-md-frontmatter {
+  --cm-line-bg: color-mix(in srgb, var(--side) 70%, transparent);
   font-family: var(--mono-font);
   font-size: 11px;
   color: var(--muted);
-  background: color-mix(in srgb, var(--side) 70%, transparent);
 }
 
 .cm-md-code-line {
+  --cm-line-bg: var(--code);
   font-family: var(--mono-font);
   font-size: 12px;
   line-height: 1.75;
-  background: var(--code);
   padding-left: 12px !important;
   padding-right: 12px;
   color: color-mix(in srgb, var(--text) 92%, var(--muted));
@@ -628,6 +639,28 @@
 .cm-md-code-last {
   border-radius: 0 0 8px 8px;
   padding-bottom: 6px !important;
+}
+
+/*
+ * 带底色的块把底色画到 z-index:-1 的伪元素上。
+ * CodeMirror 的选区层（.cm-selectionLayer）是 .cm-scroller 的子节点且同为 z-index:-1，
+ * 位于 .cm-content 之后，因此只要行背景留在元素自身，就会盖住选区高亮，
+ * 出现"选中了却看不到高亮"。放到伪元素后绘制顺序变成：行底色 → 选区层 → 文字。
+ */
+:is(.cm-md-quote, .cm-md-code-line, .cm-md-table-source, .cm-md-frontmatter) {
+  position: relative;
+}
+
+:is(.cm-md-quote, .cm-md-code-line, .cm-md-table-source, .cm-md-frontmatter)::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  /* 必须明显低于 .cm-selectionLayer：CodeMirror 用 z-index = -1 - 图层序号 计算，
+     实测选区层是 -2（前面还有 dropCursor 等图层），写成 -1 会反过来盖住选区。
+     这里用 -10，仍高于 .cm-editor 自身的页面底色。 */
+  z-index: -10;
+  border-radius: inherit;
+  background: var(--cm-line-bg);
 }
 
 .cm-md-hr-line {
@@ -739,10 +772,13 @@
 }
 
 .cm-widget-code .code-head button {
+  /* 固定宽度，避免「复制 → 复制成功」时按钮宽度跳动 */
+  min-width: 54px;
   font-size: 9px;
   color: var(--muted);
   padding: 2px 6px;
   border-radius: 4px;
+  text-align: center;
 }
 
 .cm-widget-code pre {
@@ -857,77 +893,164 @@
   font-family: var(--ui-font);
 }
 
-/* 搜索高亮 */
+/* 搜索高亮：全部命中为黄色，当前命中换成橙色以便区分。
+   CodeMirror 自带主题用运行时注入的 .ͼx .cm-searchMatch 抢先着色，
+   所以这里的 background 必须 !important 才能盖住它。 */
 .cm-searchMatch {
-  background: color-mix(in srgb, #e8c987 45%, transparent);
-  outline: 1px solid color-mix(in srgb, #c9a253 60%, transparent);
+  background: color-mix(in srgb, #ffd400 55%, transparent) !important;
+  outline: 1px solid color-mix(in srgb, #d9a800 65%, transparent);
+  border-radius: 2px;
 }
 
 .cm-searchMatch-selected {
-  background: color-mix(in srgb, #d9b060 65%, transparent);
+  background: color-mix(in srgb, #ff8f00 70%, transparent) !important;
+  outline-color: color-mix(in srgb, #c96a00 80%, transparent);
 }
 
-/* 代码高亮配色（自定义，避免外部 CSS） */
+/* 深色主题降低不透明度，避免亮底压住浅色文字 */
+:root[data-theme='dark'] .cm-searchMatch {
+  background: color-mix(in srgb, #ffd400 32%, transparent) !important;
+  outline-color: color-mix(in srgb, #ffd400 45%, transparent);
+}
+
+:root[data-theme='dark'] .cm-searchMatch-selected {
+  background: color-mix(in srgb, #ff8f00 46%, transparent) !important;
+  outline-color: color-mix(in srgb, #ffb14d 55%, transparent);
+}
+
+/* 代码高亮：沿用 highlight.js 官方 GitHub Light / GitHub Dark 主题配色，
+   只覆盖颜色，不设背景，跟随代码块自身的 --code 底色 */
 .hljs-comment,
-.hljs-quote {
-  color: #8a978a;
-  font-style: italic;
+.hljs-code,
+.hljs-formula {
+  color: #6a737d;
 }
 
-.hljs-keyword,
-.hljs-selector-tag,
-.hljs-literal {
-  color: #7b5f9e;
-}
-
-.hljs-string,
 .hljs-doctag,
-.hljs-regexp {
-  color: #6f8c53;
-}
-
-.hljs-number,
-.hljs-built_in,
-.hljs-builtin-name {
-  color: #9a6a3f;
+.hljs-keyword,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type,
+.hljs-variable.language_ {
+  color: #d73a49;
 }
 
 .hljs-title,
-.hljs-section,
-.hljs-function .hljs-title {
-  color: #4b7a86;
+.hljs-title.class_,
+.hljs-title.function_ {
+  color: #6f42c1;
 }
 
 .hljs-attr,
 .hljs-attribute,
+.hljs-literal,
+.hljs-meta,
+.hljs-number,
+.hljs-operator,
 .hljs-variable,
-.hljs-template-variable {
-  color: #8a6a4a;
+.hljs-selector-attr,
+.hljs-selector-class,
+.hljs-selector-id {
+  color: #005cc5;
 }
 
-.hljs-type,
-.hljs-class .hljs-title {
-  color: #6a7f9b;
+.hljs-regexp,
+.hljs-string,
+.hljs-meta .hljs-string {
+  color: #032f62;
 }
 
-.hljs-meta {
-  color: #8d8d6a;
+.hljs-built_in,
+.hljs-symbol {
+  color: #e36209;
 }
 
-:root[data-theme='dark'] .hljs-comment {
-  color: #7f8d7c;
+.hljs-name,
+.hljs-quote,
+.hljs-selector-tag,
+.hljs-selector-pseudo {
+  color: #22863a;
 }
 
-:root[data-theme='dark'] .hljs-keyword {
-  color: #c3a9e0;
+.hljs-section {
+  color: #005cc5;
+  font-weight: 600;
 }
 
-:root[data-theme='dark'] .hljs-string {
-  color: #a6c58c;
+.hljs-bullet {
+  color: #735c0f;
 }
 
-:root[data-theme='dark'] .hljs-number {
-  color: #d5b083;
+.hljs-subst {
+  color: var(--text);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 600;
+}
+
+:root[data-theme='dark'] .hljs-comment,
+:root[data-theme='dark'] .hljs-code,
+:root[data-theme='dark'] .hljs-formula {
+  color: #8b949e;
+}
+
+:root[data-theme='dark'] .hljs-doctag,
+:root[data-theme='dark'] .hljs-keyword,
+:root[data-theme='dark'] .hljs-template-tag,
+:root[data-theme='dark'] .hljs-template-variable,
+:root[data-theme='dark'] .hljs-type,
+:root[data-theme='dark'] .hljs-variable.language_ {
+  color: #ff7b72;
+}
+
+:root[data-theme='dark'] .hljs-title,
+:root[data-theme='dark'] .hljs-title.class_,
+:root[data-theme='dark'] .hljs-title.function_ {
+  color: #d2a8ff;
+}
+
+:root[data-theme='dark'] .hljs-attr,
+:root[data-theme='dark'] .hljs-attribute,
+:root[data-theme='dark'] .hljs-literal,
+:root[data-theme='dark'] .hljs-meta,
+:root[data-theme='dark'] .hljs-number,
+:root[data-theme='dark'] .hljs-operator,
+:root[data-theme='dark'] .hljs-variable,
+:root[data-theme='dark'] .hljs-selector-attr,
+:root[data-theme='dark'] .hljs-selector-class,
+:root[data-theme='dark'] .hljs-selector-id {
+  color: #79c0ff;
+}
+
+:root[data-theme='dark'] .hljs-regexp,
+:root[data-theme='dark'] .hljs-string,
+:root[data-theme='dark'] .hljs-meta .hljs-string {
+  color: #a5d6ff;
+}
+
+:root[data-theme='dark'] .hljs-built_in,
+:root[data-theme='dark'] .hljs-symbol {
+  color: #ffa657;
+}
+
+:root[data-theme='dark'] .hljs-name,
+:root[data-theme='dark'] .hljs-quote,
+:root[data-theme='dark'] .hljs-selector-tag,
+:root[data-theme='dark'] .hljs-selector-pseudo {
+  color: #7ee787;
+}
+
+:root[data-theme='dark'] .hljs-section {
+  color: #79c0ff;
+}
+
+:root[data-theme='dark'] .hljs-bullet {
+  color: #f2cc60;
 }
 
 /* 导入主题作用域容器 */

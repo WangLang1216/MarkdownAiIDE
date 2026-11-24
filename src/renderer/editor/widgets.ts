@@ -242,16 +242,26 @@ export class CodeBlockWidget extends WidgetType {
     const copy = document.createElement('button')
     copy.type = 'button'
     copy.textContent = '复制'
-    copy.addEventListener('click', (event) => {
+    copy.addEventListener('click', async (event) => {
       event.stopPropagation()
-      void navigator.clipboard.writeText(this.spec.code).then(() => {
-        copy.textContent = '已复制'
-        window.setTimeout(() => {
-          copy.textContent = '复制'
-        }, 1600)
-      })
+      // 渲染进程禁用了所有 Web 权限，navigator.clipboard 会直接 reject，必须走主进程剪贴板
+      try {
+        await window.api.app.writeClipboardText(this.spec.code)
+        copy.textContent = '复制成功'
+      } catch {
+        copy.textContent = '复制失败'
+      }
+      window.setTimeout(() => {
+        copy.textContent = '复制'
+      }, 1600)
     })
     head.append(label, copy)
+    // 顶部工具条属于控件而不是正文：拦下 mousedown，
+    // 否则浏览器会把光标移进代码块，livePreview 立刻切成源码，按钮还没等到 click 就被销毁了
+    head.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+    })
     const pre = document.createElement('pre')
     const code = document.createElement('code')
     code.className = 'hljs'
@@ -260,7 +270,7 @@ export class CodeBlockWidget extends WidgetType {
     wrap.append(head, pre)
     if (!this.spec.locked) {
       wrap.addEventListener('click', (event) => {
-        if ((event.target as HTMLElement).closest('button')) return
+        if ((event.target as HTMLElement).closest('.code-head')) return
         view.dispatch({
           selection: EditorSelection.cursor(Math.min(this.spec.sourcePos, view.state.doc.length)),
           scrollIntoView: true
@@ -271,9 +281,13 @@ export class CodeBlockWidget extends WidgetType {
     return spacedBlock(wrap)
   }
 
-  /** 向 CodeMirror 声明是否忽略属于当前装饰的事件。 */
-  override ignoreEvent(): boolean {
-    return false
+  /**
+   * 复制按钮上的事件交给 DOM 自己处理。
+   * 否则 CodeMirror 会把这次点击当成"点进代码块"，光标落到 fence 上，
+   * 块立刻切成源码形态——看起来就像"点了复制却跳成了源码"。
+   */
+  override ignoreEvent(event: Event): boolean {
+    return Boolean((event.target as HTMLElement | null)?.closest?.('.code-head'))
   }
 }
 

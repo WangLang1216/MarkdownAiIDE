@@ -89,6 +89,12 @@ function closeProviderMenu(): void {
   providerTrigger.value?.focus()
 }
 
+/** 从模型菜单直接跳到「模型服务」设置页 */
+function openProviderSettings(): void {
+  providerOpen.value = false
+  ui.modal = 'providers'
+}
+
 function changeProvider(providerId: string): void {
   agent.setProvider(providerId)
   closeProviderMenu()
@@ -147,17 +153,37 @@ async function loadOlder(): Promise<void> {
 }
 
 const hasSelection = computed(() => ui.selectionFrom !== ui.selectionTo)
+/** 选区字数，用于提示本次会附带多少内容给模型 */
+const selectionLength = computed(() => Math.max(0, ui.selectionTo - ui.selectionFrom))
+/** "选中部分"作用域下选区是改写目标，不再重复作为上下文 */
+const showSelectionChip = computed(() => hasSelection.value && agent.scope !== 'selection')
 const contextTitle = computed(() => documents.activeTab?.snapshot.title ?? '工作区')
 const hasTask = computed(() => agent.task.status !== 'idle')
 const running = computed(() => agent.task.status === 'running' || agent.task.status === 'waiting_input')
 const providerReady = computed(() => Boolean(agent.selectedProvider))
 
-const roleOptions: Array<{ value: ReferenceRole; label: string }> = [
-  { value: 'facts', label: '事实依据' },
-  { value: 'data', label: '待提取数据' },
-  { value: 'writing_style', label: '写作风格' },
-  { value: 'visual_style', label: '视觉样式' }
+const roleOptions: Array<{ value: ReferenceRole; label: string; icon: string }> = [
+  { value: 'facts', label: '事实依据', icon: 'file' },
+  { value: 'data', label: '待提取数据', icon: 'table' },
+  { value: 'writing_style', label: '写作风格', icon: 'sparkles' },
+  { value: 'visual_style', label: '视觉样式', icon: 'image' }
 ]
+
+/** 当前展开用途菜单的参考来源 */
+const roleMenuId = ref<string | null>(null)
+
+function roleLabel(value: ReferenceRole): string {
+  return roleOptions.find((item) => item.value === value)?.label ?? '参考用途'
+}
+
+function toggleRoleMenu(sourceId: string): void {
+  roleMenuId.value = roleMenuId.value === sourceId ? null : sourceId
+}
+
+function onRoleFocusOut(event: FocusEvent): void {
+  if ((event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) return
+  roleMenuId.value = null
+}
 
 /** 附件缩略图：按需读取 data URL，点击可放大预览 */
 const thumbnails = ref<Record<string, string>>({})
@@ -238,8 +264,10 @@ async function ingestFiles(files: File[]): Promise<void> {
       const buffer = await file.arrayBuffer()
       if (/^image\/(png|jpeg|gif|webp)$/.test(file.type) || /\.(png|jpe?g|gif|webp)$/i.test(file.name)) {
         await agent.addAttachmentBytes(file.name || '粘贴的图片.png', file.type, buffer, key)
+        ui.toast('附件上传成功：' + (file.name || '粘贴的图片.png'), 'success')
       } else {
         const source = await agent.addReferenceBytes(file.name || '参考文件', buffer, key)
+        ui.toast('附件上传成功：' + source.title, 'success')
         if (source.status === 'partial' && source.message) ui.toast(file.name + '：' + source.message, 'warning', 5000)
       }
     } catch (error) {
@@ -310,8 +338,8 @@ async function addCurrentDocument(): Promise<void> {
   }
 }
 
-async function changeRole(sourceId: string, event: Event): Promise<void> {
-  const role = (event.target as HTMLSelectElement).value as ReferenceRole
+async function changeRole(sourceId: string, role: ReferenceRole): Promise<void> {
+  roleMenuId.value = null
   try {
     await agent.setSourceRoles(sourceId, [role])
   } catch (error) {
@@ -591,7 +619,25 @@ watch(() => agent.history[0]?.task.taskId, async () => {
         </div>
       </div>
 
-      <div v-if="agent.selectedAttachments.length || agent.selectedSources.length" class="chips">
+      <div
+        v-if="agent.selectedAttachments.length || agent.selectedSources.length || showSelectionChip"
+        class="chips"
+      >
+        <button
+          v-if="showSelectionChip"
+          type="button"
+          class="chip selection-chip"
+          :class="{ off: !agent.quoteSelection }"
+          :title="
+            agent.quoteSelection
+              ? '发送时会把选中的这段文字一并交给 AI，点击可取消'
+              : '点击把选中的这段文字一并交给 AI'
+          "
+          @click="agent.quoteSelection = !agent.quoteSelection"
+        >
+          <Icon :name="agent.quoteSelection ? 'check' : 'quote'" :size="10" />
+          选中内容 · {{ selectionLength }} 字
+        </button>
         <span v-for="item in agent.selectedAttachments" :key="item.attachmentId" class="chip attachment-chip">
           <button
             class="chip-thumb"
@@ -621,16 +667,40 @@ watch(() => agent.history[0]?.task.taskId, async () => {
           >
             {{ source.title }}
           </button>
-          <select
-            :value="source.roles[0]"
-            class="role-select"
-            aria-label="参考用途"
-            @change="changeRole(source.sourceId, $event)"
-          >
-            <option v-for="role in roleOptions" :key="role.value" :value="role.value">
-              {{ role.label }}
-            </option>
-          </select>
+          <div class="role-picker" @focusout="onRoleFocusOut" @click.stop @keydown.esc.stop="roleMenuId = null">
+            <button
+              type="button"
+              class="role-trigger"
+              :aria-label="'参考用途：' + roleLabel(source.roles[0])"
+              aria-haspopup="menu"
+              :aria-expanded="roleMenuId === source.sourceId"
+              @click.stop="toggleRoleMenu(source.sourceId)"
+            >
+              {{ roleLabel(source.roles[0]) }}
+              <Icon name="chevron-down" :size="9" />
+            </button>
+            <div
+              v-if="roleMenuId === source.sourceId"
+              class="picker-menu role-menu"
+              role="menu"
+              aria-label="参考用途"
+            >
+              <div class="picker-heading" aria-hidden="true">参考用途</div>
+              <button
+                v-for="role in roleOptions"
+                :key="role.value"
+                type="button"
+                role="menuitemradio"
+                :aria-checked="source.roles[0] === role.value"
+                tabindex="-1"
+                @click.stop="changeRole(source.sourceId, role.value)"
+              >
+                <Icon :name="role.icon" :size="15" />
+                <span class="picker-option-text"><span>{{ role.label }}</span></span>
+                <Icon v-if="source.roles[0] === role.value" name="check" :size="14" />
+              </button>
+            </div>
+          </div>
           <button class="x" aria-label="移除参考" @click="agent.toggleSource(source.sourceId)">
             <Icon name="x" :size="9" />
           </button>
@@ -735,7 +805,12 @@ watch(() => agent.history[0]?.task.taskId, async () => {
             aria-label="切换模型"
             @keydown="onMenuKeydown($event, closeProviderMenu)"
           >
-            <div class="picker-heading" aria-hidden="true">切换模型</div>
+            <div class="picker-heading-row">
+              <div class="picker-heading" aria-hidden="true">切换模型</div>
+              <button type="button" class="picker-config" title="打开模型服务设置" @click="openProviderSettings">
+                模型配置
+              </button>
+            </div>
             <button
               v-for="provider in agent.providers"
               :key="provider.providerId"
@@ -871,6 +946,34 @@ watch(() => agent.history[0]?.task.taskId, async () => {
   font-size: 10px;
 }
 
+.picker-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-right: 5px;
+}
+
+/* 覆盖 .picker-menu button 的三栏 grid，让它成为一个内联小按钮 */
+.picker-menu .picker-config {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  width: auto;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--soft);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.picker-menu .picker-config:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
 .picker-menu button {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) 14px;
@@ -971,12 +1074,55 @@ watch(() => agent.history[0]?.task.taskId, async () => {
   padding: 2px 0 6px;
 }
 
-.chip .role-select {
+/* 选中内容 chip：默认随消息发给模型，点一下取消 */
+.selection-chip {
+  cursor: pointer;
+  font-size: 9px;
+  color: var(--soft);
+}
+
+.selection-chip.off {
+  background: transparent;
+  color: var(--muted);
+}
+
+.selection-chip.off:hover {
+  color: var(--text);
+}
+
+/* 参考用途：与「切换模型」同一套 picker 弹层 */
+.role-picker {
+  position: relative;
+  display: inline-flex;
+}
+
+.role-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 84px;
+  padding: 0;
   border: 0;
   background: transparent;
-  font-size: 9px;
   color: var(--muted);
-  max-width: 72px;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.role-trigger:hover {
+  color: var(--text);
+}
+
+.role-trigger svg {
+  width: 9px;
+  height: 9px;
+  flex: none;
+}
+
+.role-menu {
+  left: auto;
+  right: 0;
+  width: 178px;
 }
 
 .clarify-input {

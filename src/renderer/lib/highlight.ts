@@ -16,6 +16,14 @@ import go from 'highlight.js/lib/languages/go'
 import rust from 'highlight.js/lib/languages/rust'
 import sql from 'highlight.js/lib/languages/sql'
 import java from 'highlight.js/lib/languages/java'
+import c from 'highlight.js/lib/languages/c'
+import cpp from 'highlight.js/lib/languages/cpp'
+import csharp from 'highlight.js/lib/languages/csharp'
+import php from 'highlight.js/lib/languages/php'
+import ruby from 'highlight.js/lib/languages/ruby'
+import swift from 'highlight.js/lib/languages/swift'
+import kotlin from 'highlight.js/lib/languages/kotlin'
+import diff from 'highlight.js/lib/languages/diff'
 
 hljs.registerLanguage('javascript', javascript)
 hljs.registerLanguage('js', javascript)
@@ -38,12 +46,40 @@ hljs.registerLanguage('go', go)
 hljs.registerLanguage('rust', rust)
 hljs.registerLanguage('sql', sql)
 hljs.registerLanguage('java', java)
+hljs.registerLanguage('c', c)
+hljs.registerLanguage('cpp', cpp)
+hljs.registerLanguage('csharp', csharp)
+hljs.registerLanguage('php', php)
+hljs.registerLanguage('ruby', ruby)
+hljs.registerLanguage('swift', swift)
+hljs.registerLanguage('kotlin', kotlin)
+hljs.registerLanguage('diff', diff)
+
+/**
+ * Markdown 里的写法与语法名的差异。jsonl / ndjson 没有独立语法，
+ * 用 json 逐行着色即可。
+ */
+const LANGUAGE_ALIASES: Record<string, string> = {
+  jsonl: 'json',
+  ndjson: 'json',
+  'c++': 'cpp',
+  'c#': 'csharp',
+  'objective-c': 'c',
+  golang: 'go'
+}
+
+/** 把 Markdown 里写的语言标识映射到已注册的语法名。 */
+export function resolveLanguage(language: string): string {
+  const key = language.trim().toLowerCase()
+  return LANGUAGE_ALIASES[key] ?? key
+}
 
 /** 按语言高亮代码；不支持的语言走转义回退。 */
 export function highlightCode(code: string, language: string): string {
-  if (language && hljs.getLanguage(language)) {
+  const resolved = resolveLanguage(language)
+  if (resolved && hljs.getLanguage(resolved)) {
     try {
-      return hljs.highlight(code, { language, ignoreIllegals: true }).value
+      return hljs.highlight(code, { language: resolved, ignoreIllegals: true }).value
     } catch {
       return escape(code)
     }

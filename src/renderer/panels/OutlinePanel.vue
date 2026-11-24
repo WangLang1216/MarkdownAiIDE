@@ -77,7 +77,6 @@ function hide(): void {
         <Icon name="panel-right" :size="14" />
       </button>
     </div>
-    <div class="outline-subtitle">清晰结构，专注表达</div>
 
     <nav class="outline-nav" aria-label="文档目录">
       <button

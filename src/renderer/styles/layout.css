@@ -712,7 +712,7 @@
 }
 
 .editor-toolbar {
-  height: 51px;
+  height: var(--toolbar-height);
   display: flex;
   align-items: center;
   padding: 0 16px;
@@ -1753,6 +1753,8 @@ body.split-resizing .cm-content {
   gap: 8px;
   color: var(--soft);
   font-size: 12px;
+  /* 原来由 .outline-subtitle 撑开的间距，删掉副标题后直接留在标题上 */
+  margin-bottom: 16px;
 }
 
 .outline-heading > svg {
@@ -1773,12 +1775,6 @@ body.split-resizing .cm-content {
 .outline-heading button svg {
   width: 14px;
   height: 14px;
-}
-
-.outline-subtitle {
-  font-size: 10px;
-  color: var(--muted);
-  margin: 10px 0 18px;
 }
 
 .outline-nav {
@@ -1955,5 +1951,86 @@ body.split-resizing .cm-content {
   gap: 4px;
   color: var(--accent-strong);
   background: var(--selection);
+  white-space: nowrap;
+}
+
+/* ---------------------------- 斜杠插入菜单 ---------------------------- */
+.slash-menu {
+  position: fixed;
+  z-index: 90;
+  width: 268px;
+  max-height: 312px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.16);
+  /* 出现在正文顶部时可能压到工具栏的窗口拖拽区，需显式排除 */
+  -webkit-app-region: no-drag;
+}
+
+.slash-menu-title {
+  position: sticky;
+  top: -5px;
+  padding: 5px 9px 6px;
+  background: var(--card);
+  color: var(--soft);
+  font-size: 10px;
+  z-index: 1;
+}
+
+.code-lang-menu {
+  width: 236px;
+}
+
+.slash-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.slash-item[data-active='true'] {
+  background: var(--side);
+}
+
+.slash-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--page);
+  color: var(--soft);
+  font: 10px/1 var(--mono-font);
+}
+
+.slash-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.slash-text b {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.slash-text small {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }

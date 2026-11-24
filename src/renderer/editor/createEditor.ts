@@ -34,7 +34,12 @@ import {
 import { ViewPlugin } from '@codemirror/view'
 import type { EditorMode } from '../types'
 import type { EditorCallbacks, EditorFacade } from '../lib/editorApi'
+import { splitParagraphs } from '@shared/markdown/paragraphs'
 import { livePreviewExtension, liveRefreshEffect } from './livePreview'
+import { slashMenu } from './slashMenu'
+import { pickCodeLanguage } from './codeLanguageMenu'
+import { detectCodeLanguage } from './codeLanguage'
+import { searchHighlight } from './searchHighlight'
 import { acceptGhost, clearGhost, getGhost, ghostField, ghostKeymap, showGhost } from './ghost'
 import { snippetById } from './snippets'
 
@@ -60,6 +65,9 @@ export interface EditorOptions {
   locked: boolean
 }
 
+/** 上次使用的代码块语言，未设置时按纯文本处理 */
+const CODE_LANGUAGE_KEY = 'moye.codeLanguage'
+
 const markdownHighlight = HighlightStyle.define([
   { tag: tags.heading1, fontWeight: '650', color: 'var(--accent)' },
   {
@@ -70,7 +78,7 @@ const markdownHighlight = HighlightStyle.define([
   { tag: [tags.heading4, tags.heading5, tags.heading6], fontWeight: '600', color: 'var(--soft)' },
   { tag: tags.strong, fontWeight: '650' },
   { tag: tags.emphasis, fontStyle: 'italic' },
-  { tag: [tags.link, tags.url], color: 'var(--accent)', textDecoration: 'underline' },
+  { tag: [tags.link, tags.url], color: 'var(--link)', textDecorationColor: 'color-mix(in srgb, var(--link) 40%, transparent)', textDecoration: 'underline' },
   { tag: [tags.monospace], color: 'color-mix(in srgb, var(--accent) 70%, var(--text))' },
   { tag: [tags.comment, tags.quote], color: 'var(--muted)' },
   { tag: tags.processingInstruction, color: 'var(--muted)' },
@@ -166,6 +174,8 @@ export class EditorController implements EditorFacade {
   private selectionObserver: ((event: Event) => void) | null = null
   private suppressChange = false
   private outlineTimer = 0
+  /** 每个文稿离开时的光标与滚动位置，切回标签时据此恢复 */
+  private readonly viewStates = new Map<string, { anchor: number; head: number; scrollTop: number }>()
 
   /** 创建 CodeMirror 视图，安装编辑扩展及宿主回调。 */
   constructor(parent: HTMLElement, options: EditorOptions, callbacks: EditorCallbacks) {
@@ -205,6 +215,7 @@ export class EditorController implements EditorFacade {
       markdown({ base: markdownLanguage, extensions: [GFM] }),
       keymap.of([{ key: 'Enter', run: endHeading }, ...defaultKeymap, ...historyKeymap, indentWithTab]),
       search({ top: false }),
+      searchHighlight,
       ghostField,
       ghostKeymap,
       placeholder('从这里开始书写，或让 AI 帮你整理想法…'),
@@ -263,7 +274,8 @@ export class EditorController implements EditorFacade {
           loadRemoteImages: () => this.loadRemote,
           dark: () => this.dark,
           locked: () => this.locked
-        })
+        }),
+        slashMenu({ onPick: (id, range) => this.insertSnippetAt(id, range) })
       ]
     }
     return [
@@ -281,8 +293,36 @@ export class EditorController implements EditorFacade {
     this.view.dispatch({ effects: liveRefreshEffect.of(null) })
   }
 
+  /** 记下当前文稿的光标与滚动位置，供下次切回时恢复 */
+  private rememberViewState(): void {
+    if (!this.documentId) return
+    const range = this.view.state.selection.main
+    this.viewStates.set(this.documentId, {
+      anchor: range.anchor,
+      head: range.head,
+      scrollTop: this.view.scrollDOM.scrollTop
+    })
+  }
+
+  /**
+   * 换文档后行高还没量完就赋值可能被夹回顶部，所以先直接写一次拿到即时效果，
+   * 等 CodeMirror 量完高度再对齐一次（切走后不再回写，避免和用户滚动打架）。
+   */
+  private restoreScroll(top: number): void {
+    const documentId = this.documentId
+    this.view.scrollDOM.scrollTop = top
+    this.view.requestMeasure<number>({
+      read: () => top,
+      write: (value) => {
+        if (this.documentId !== documentId) return
+        this.view.scrollDOM.scrollTop = value
+      }
+    })
+  }
+
   /** 加载指定文稿正文并切换编辑器的文稿上下文。 */
   loadDocument(text: string, documentId: string | null): void {
+    this.rememberViewState()
     this.documentId = documentId
     this.suppressChange = true
     try {
@@ -290,13 +330,26 @@ export class EditorController implements EditorFacade {
     } finally {
       this.suppressChange = false
     }
-    // 打开文档时把光标放在首行之后，避免标题标记因“光标所在行”而暴露
+    const max = this.view.state.doc.length
+    const saved = documentId ? this.viewStates.get(documentId) : undefined
+    if (saved) {
+      // 切回打开过的文稿：回到上次的光标与滚动位置
+      this.view.dispatch({
+        selection: {
+          anchor: Math.min(saved.anchor, max),
+          head: Math.min(saved.head, max)
+        }
+      })
+      this.restoreScroll(saved.scrollTop)
+      return
+    }
+    // 首次打开：把光标放在首行之后，避免标题标记因"光标所在行"而暴露
     const anchor =
       this.view.state.doc.lines > 1
-        ? Math.min(this.view.state.doc.line(1).to + 1, this.view.state.doc.length)
+        ? Math.min(this.view.state.doc.line(1).to + 1, max)
         : 0
     this.view.dispatch({ selection: { anchor } })
-    this.view.scrollDOM.scrollTop = 0
+    this.restoreScroll(0)
   }
 
   /** 更新编辑器当前文稿标识，供预览图片解析使用。 */
@@ -320,6 +373,7 @@ export class EditorController implements EditorFacade {
   setText(text: string): void {
     if (text === this.getText()) return
     const head = Math.min(this.view.state.selection.main.head, text.length)
+    const scrollTop = this.view.scrollDOM.scrollTop
     this.suppressChange = true
     try {
       this.view.setState(EditorState.create({ doc: text, extensions: this.buildExtensions(this.spellcheck) }))
@@ -327,6 +381,8 @@ export class EditorController implements EditorFacade {
       this.suppressChange = false
     }
     this.view.dispatch({ selection: { anchor: head } })
+    // 整体替换正文时保持当前阅读位置，不要跳回顶部
+    this.restoreScroll(scrollTop)
   }
 
   /** 按编辑前坐标批量应用源码编辑，并按需要定位变更区间。 */
@@ -368,11 +424,66 @@ export class EditorController implements EditorFacade {
     }
   }
 
+  /** 斜杠菜单选中元素：先删掉 `/关键字`，再按现有 snippet 流程插入 */
+  private insertSnippetAt(id: string, range: { from: number; to: number }): void {
+    if (this.locked) return
+    const max = this.view.state.doc.length
+    const from = Math.max(0, Math.min(range.from, max))
+    const to = Math.max(from, Math.min(range.to, max))
+    this.view.dispatch({ changes: { from, to, insert: '' }, selection: { anchor: from } })
+    this.insertSnippet(id)
+  }
+
+  /** 弹语言选择层，确认后再把围栏写进正文 */
+  private pickCodeLanguageThenInsert(): void {
+    const { from, to } = this.getSelection()
+    const selected = this.view.state.doc.sliceString(from, to)
+    const detected = selected.trim() ? detectCodeLanguage(selected) : null
+    pickCodeLanguage({
+      view: this.view,
+      anchor: to,
+      detected,
+      current: window.localStorage.getItem(CODE_LANGUAGE_KEY) ?? 'txt',
+      onPick: (language) => {
+        window.localStorage.setItem(CODE_LANGUAGE_KEY, language)
+        this.insertCodeFence(language, selected, from, to)
+      }
+    })
+  }
+
+  /** 用选定语言把选区（或插入点）包成围栏代码块；空块把光标留在中间那一行 */
+  private insertCodeFence(language: string, selected: string, from: number, to: number): void {
+    if (this.locked) return
+    const doc = this.view.state.doc
+    const start = Math.max(0, Math.min(from, doc.length))
+    const end = Math.max(start, Math.min(to, doc.length))
+    const hasContent = Boolean(selected.trim())
+    const body = hasContent ? `\`\`\`${language}\n${selected}\n\`\`\`` : `\`\`\`${language}\n\n\`\`\``
+    const before = doc.sliceString(0, start)
+    const after = doc.sliceString(end)
+    const lead = before.length === 0 ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n'
+    const trail = after.length === 0 ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n'
+    const caret = hasContent
+      ? start + lead.length + body.length
+      : start + lead.length + 3 + language.length + 1
+    this.view.dispatch({
+      changes: { from: start, to: end, insert: `${lead}${body}${trail}` },
+      selection: { anchor: caret },
+      scrollIntoView: true
+    })
+    this.view.focus()
+  }
+
   /** 插入元素片段；标题等带占位文字的片段会直接选中占位文字，方便一键替换或删除 */
   insertSnippet(elementId: string): boolean {
     if (this.locked) return false
     const snippet = snippetById(elementId)
     if (!snippet || !snippet.markdown) return false
+    // 代码块先确认语言：有选区时给出自动识别结果，没有选区时沿用上次用过的语言
+    if (elementId === 'code') {
+      this.pickCodeLanguageThenInsert()
+      return true
+    }
     const { from, to } = this.getSelection()
     const selected = this.view.state.doc.sliceString(from, to)
     if (selected && elementId === 'link') {
@@ -425,29 +536,10 @@ export class EditorController implements EditorFacade {
     const { from, to } = this.getSelection()
     const start = doc.lineAt(from)
     const end = doc.lineAt(from === to ? to : to - 1)
-    const marker = /^\s*(?:#{1,6}\s+|>\s*|(?:[-+*]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)/
-    let first = start.number
-    let last = end.number
-    const isContinuation = (text: string): boolean => Boolean(text.trim()) && !marker.test(text)
-    if (start.text.trim() && !marker.test(start.text)) {
-      while (first > 1 && isContinuation(doc.line(first - 1).text)) first--
-    }
-    if (end.text.trim() && !marker.test(end.text)) {
-      while (last < doc.lines && isContinuation(doc.line(last + 1).text)) last++
-    }
-    const paragraphs: string[] = []
-    let paragraph: string[] = []
-    const flush = (): void => {
-      if (paragraph.length) paragraphs.push(paragraph.join(' '))
-      paragraph = []
-    }
-    for (let number = first; number <= last; number++) {
-      const line = doc.line(number).text
-      if (!line.trim() || marker.test(line)) flush()
-      if (line.trim()) paragraph.push(line.replace(marker, '').trim())
-      if (marker.test(line)) flush()
-    }
-    flush()
+    // 段落边界取文本里的回车，而不是可视行：自动折行的长段落仍是一段。
+    // 范围只到选区覆盖到的最后一行，不会把下面的段落一起吸进来。
+    const selected = doc.sliceString(doc.line(start.number).from, doc.line(end.number).to)
+    const paragraphs = splitParagraphs(selected)
     if (!paragraphs.length) return false
     const prefixes: Record<string, string> = {
       h1: '# ', h2: '## ', h3: '### ', 'heading-id': '## ', quote: '> ',
@@ -455,11 +547,11 @@ export class EditorController implements EditorFacade {
     }
     const body = paragraphs.map((content, index) => {
       const prefix = id === 'ordered' ? `${index + 1}. ` : (prefixes[id] ?? '')
-      const suffix = id === 'heading-id' ? ` {#section-${first + index}}` : ''
+      const suffix = id === 'heading-id' ? ` {#section-${start.number + index}}` : ''
       return prefix + content + suffix
     }).join(/^(list|ordered|tasks)$/.test(id) ? '\n' : '\n\n')
-    const begin = doc.line(first).from
-    const finish = doc.line(last).to
+    const begin = doc.line(start.number).from
+    const finish = doc.line(end.number).to
     this.view.dispatch({
       changes: { from: begin, to: finish, insert: body },
       selection: from === to ? { anchor: begin + body.length } : { anchor: begin, head: begin + body.length },

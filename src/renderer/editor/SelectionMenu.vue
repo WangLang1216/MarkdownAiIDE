@@ -102,6 +102,8 @@ function disabled(item: MenuItem): boolean {
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.16);
   display: flex;
   flex-direction: column;
+  /* 选区靠近窗口顶部时会浮在 .editor-toolbar 的拖拽区上，需显式排除 */
+  -webkit-app-region: no-drag;
 }
 
 .selection-menu button {

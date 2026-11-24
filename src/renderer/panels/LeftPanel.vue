@@ -460,7 +460,7 @@ async function switchWorkspace(): Promise<void> {
             @dragend="endReorder"
           >
             <span v-if="item.glyph" class="glyph">{{ item.glyph }}</span>
-            <Icon v-else :name="item.id === 'mermaid' ? 'workflow' : 'info'" :size="15" />
+            <Icon v-else :name="item.id === 'mermaid' ? 'workflow' : 'file'" :size="15" />
             <span class="label">{{ item.label }}</span>
           </button>
           <span
@@ -508,7 +508,7 @@ async function switchWorkspace(): Promise<void> {
           >
             <span class="module-icon">
               <span v-if="item.id === 'math'" class="math-icon">ƒ</span>
-              <Icon v-else :name="item.id === 'mermaid' ? 'workflow' : 'info'" :size="15" />
+              <Icon v-else :name="item.id === 'mermaid' ? 'workflow' : 'file'" :size="15" />
             </span>
             <span
               >{{ item.label }}<small>{{ item.description }}</small></span
