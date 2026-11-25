@@ -35,6 +35,7 @@ import { ViewPlugin } from '@codemirror/view'
 import type { EditorMode } from '../types'
 import type { EditorCallbacks, EditorFacade } from '../lib/editorApi'
 import { splitParagraphs } from '@shared/markdown/paragraphs'
+import { findLinkAt, findLinkByTextRange, wrapLinkSource } from '@shared/markdown/links'
 import { livePreviewExtension, liveRefreshEffect } from './livePreview'
 import { slashMenu } from './slashMenu'
 import { pickCodeLanguage } from './codeLanguageMenu'
@@ -132,6 +133,52 @@ function endHeading(view: EditorView): boolean {
   return true
 }
 
+/**
+ * 双击链接（文字或标记）时选中整段 Markdown 链接源码，
+ * 避免只选中文字后删除，留下 `[` 与 `](url)` 这些被实时预览隐藏的标记。
+ */
+function selectLinkAt(view: EditorView, event: MouseEvent): boolean {
+  if (view.state.readOnly) return false
+  const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
+  if (pos === null) return false
+  const line = view.state.doc.lineAt(pos)
+  const link = findLinkAt(line.text, pos - line.from)
+  if (!link) return false
+  event.preventDefault()
+  view.dispatch({
+    selection: { anchor: line.from + link.from, head: line.from + link.to },
+    scrollIntoView: true
+  })
+  view.focus()
+  return true
+}
+
+/** 选区恰好是链接文字时，退格/删除连整段链接标记一起移除。 */
+function deleteWholeLink(view: EditorView): boolean {
+  if (view.composing || view.state.readOnly || view.state.selection.ranges.length !== 1) return false
+  const range = view.state.selection.main
+  if (range.empty) return false
+  const line = view.state.doc.lineAt(range.from)
+  if (range.to > line.to) return false
+  const link = findLinkByTextRange(line.text, range.from - line.from, range.to - line.from)
+  if (!link) return false
+  const from = line.from + link.from
+  view.dispatch({
+    changes: { from, to: line.from + link.to, insert: '' },
+    selection: { anchor: from },
+    scrollIntoView: true,
+    userEvent: 'delete'
+  })
+  view.focus()
+  return true
+}
+
+/** 链接文字上的退格/删除优先清理整段链接，其余情况交回默认键盘映射。 */
+const linkDeleteKeymap = keymap.of([
+  { key: 'Backspace', run: deleteWholeLink },
+  { key: 'Delete', run: deleteWholeLink }
+])
+
 function typewriterExtension(): Extension {
   return ViewPlugin.fromClass(
     class {
@@ -213,6 +260,7 @@ export class EditorController implements EditorFacade {
       EditorState.tabSize.of(2),
       EditorView.lineWrapping,
       markdown({ base: markdownLanguage, extensions: [GFM] }),
+      linkDeleteKeymap,
       keymap.of([{ key: 'Enter', run: endHeading }, ...defaultKeymap, ...historyKeymap, indentWithTab]),
       search({ top: false }),
       searchHighlight,
@@ -261,6 +309,9 @@ export class EditorController implements EditorFacade {
             return true
           }
           return false
+        },
+        dblclick(event, view) {
+          return selectLinkAt(view, event)
         }
       })
     ]
@@ -625,11 +676,10 @@ export class EditorController implements EditorFacade {
     const selected = this.view.state.doc.sliceString(from, to)
     const text = selected || '链接文字'
     const href = 'https://'
-    const insert = `[${text}](${href})`
-    const hrefFrom = from + text.length + 3
+    const { insert, hrefFrom } = wrapLinkSource(text, href)
     this.view.dispatch({
       changes: { from, to, insert },
-      selection: { anchor: hrefFrom, head: hrefFrom + href.length }
+      selection: { anchor: from + hrefFrom, head: from + hrefFrom + href.length }
     })
     this.view.focus()
   }

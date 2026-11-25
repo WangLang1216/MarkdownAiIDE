@@ -108,7 +108,8 @@ function onTabDragOver(event: DragEvent): void {
 
 function onTabDragLeave(event: DragEvent): void {
   if (isTabDrag(event)) {
-    if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) tabInsertion.value = null
+    if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null))
+      tabInsertion.value = null
     return
   }
   if (!hasFiles(event)) return
@@ -221,15 +222,24 @@ watch(
 // 标签数量变化（打开/关闭）后同步箭头状态，并保证活动标签可见
 watch(
   () => documents.tabs.length,
-  async () => {
+  async (count) => {
     await nextTick()
     updateTabScrollState()
     revealActiveTab()
+    // 关闭最后一个标签时收起 AI 编辑区与目录，让默认背景保持干净
+    if (count === 0) {
+      ui.setAiCollapsed(true)
+      ui.setOutlineVisible(false)
+    }
   }
 )
 
 onMounted(async () => {
   await nextTick()
+  if (!documents.tabs.length) {
+    ui.setAiCollapsed(true)
+    ui.setOutlineVisible(false)
+  }
   updateTabScrollState()
   revealActiveTab(false)
   const el = tabsRef.value
@@ -315,8 +325,14 @@ async function resolve(choice: 'reload' | 'overwrite' | 'saveAs'): Promise<void>
             :class="{
               active: tab.snapshot.documentId === documents.activeId,
               'tab-dragging': draggedTab === tab.snapshot.documentId,
-              'tab-drop-before': draggedTab !== tab.snapshot.documentId && tabInsertion?.id === tab.snapshot.documentId && !tabInsertion.after,
-              'tab-drop-after': draggedTab !== tab.snapshot.documentId && tabInsertion?.id === tab.snapshot.documentId && tabInsertion.after
+              'tab-drop-before':
+                draggedTab !== tab.snapshot.documentId &&
+                tabInsertion?.id === tab.snapshot.documentId &&
+                !tabInsertion.after,
+              'tab-drop-after':
+                draggedTab !== tab.snapshot.documentId &&
+                tabInsertion?.id === tab.snapshot.documentId &&
+                tabInsertion.after
             }"
             :data-tab-id="tab.snapshot.documentId"
             :draggable="documents.tabs.length > 1"
@@ -366,43 +382,45 @@ async function resolve(choice: 'reload' | 'overwrite' | 'saveAs'): Promise<void>
         <span v-if="tabDropActive" class="tabs-drop-hint" aria-hidden="true"> 松开以打开并锁定阅读 </span>
       </div>
 
-      <div class="mode-switch" role="group" aria-label="编辑模式">
-        <button
-          v-for="mode in modes"
-          :key="mode.value"
-          :class="{ active: ui.mode === mode.value }"
-          :title="mode.label"
-          @click="ui.setMode(mode.value)"
-        >
-          <Icon :name="mode.icon" :size="13" />{{ mode.label }}
-        </button>
-      </div>
+      <template v-if="documents.activeTab">
+        <div class="mode-switch" role="group" aria-label="编辑模式">
+          <button
+            v-for="mode in modes"
+            :key="mode.value"
+            :class="{ active: ui.mode === mode.value }"
+            :title="mode.label"
+            @click="ui.setMode(mode.value)"
+          >
+            <Icon :name="mode.icon" :size="13" />{{ mode.label }}
+          </button>
+        </div>
 
-      <div v-if="ui.mode === 'live'" class="width-switch" role="group" aria-label="正文宽度">
-        <button
-          v-for="option in widths"
-          :key="option.value"
-          :class="{ active: ui.contentWidth === option.value }"
-          :title="option.title"
-          @click="ui.setContentWidth(option.value)"
-        >
-          {{ option.label }}
-        </button>
-      </div>
+        <div v-if="ui.mode === 'live'" class="width-switch" role="group" aria-label="正文宽度">
+          <button
+            v-for="option in widths"
+            :key="option.value"
+            :class="{ active: ui.contentWidth === option.value }"
+            :title="option.title"
+            @click="ui.setContentWidth(option.value)"
+          >
+            {{ option.label }}
+          </button>
+        </div>
 
-      <button
-        class="iconbtn focus-toggle"
-        :class="{ active: ui.focusMode }"
-        :title="ui.focusMode ? '退出专注模式' : '专注模式'"
-        :aria-label="ui.focusMode ? '退出专注模式' : '专注模式'"
-        @click="ui.toggleFocus()"
-      >
-        <Icon name="expand" :size="15" />
-        <span v-if="ui.focusMode">退出专注</span>
-      </button>
+        <button
+          class="iconbtn focus-toggle"
+          :class="{ active: ui.focusMode }"
+          :title="ui.focusMode ? '退出专注模式' : '专注模式'"
+          :aria-label="ui.focusMode ? '退出专注模式' : '专注模式'"
+          @click="ui.toggleFocus()"
+        >
+          <Icon name="expand" :size="15" />
+          <span v-if="ui.focusMode">退出专注</span>
+        </button>
+      </template>
     </div>
 
-    <div class="formatbar">
+    <div v-if="documents.activeTab" class="formatbar">
       <div class="breadcrumb">
         {{ breadcrumb.root }}
         <template v-if="breadcrumb.path"><span>/</span>{{ breadcrumb.path }}</template>

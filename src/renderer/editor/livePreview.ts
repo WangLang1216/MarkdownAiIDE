@@ -385,6 +385,8 @@ interface InlineContext {
   hideMarkers: boolean
   documentId: string | null
   loadRemote: boolean
+  /** 非空选区的绝对位置；链接被选中时保留完整源码，便于拖选其中的地址部分 */
+  selection: Array<{ from: number; to: number }>
 }
 
 function overlaps(masked: Array<[number, number]>, from: number, to: number): boolean {
@@ -464,8 +466,17 @@ function inlineDecorations(text: string, context: InlineContext): void {
     if (overlaps(masked, start, end)) continue
     masked.push([start, end])
     addMark(context, start + 1, start + 1 + match[1].length, 'cm-md-link', { 'data-href': match[2] })
-    addHide(context, start, start + 1)
-    addHide(context, start + 1 + match[1].length, end)
+    // 链接被选中（如插入后默认选中地址、或拖选/双击选中的源码）时保留标记可见，
+    // 否则 `](https://…)` 会被装饰层替换成空 span，既看不到也无法拖选地址文本。
+    const linkFrom = context.lineFrom + start
+    const linkTo = context.lineFrom + end
+    const selected = context.selection.some(
+      (range) => range.from < linkTo && range.to > linkFrom
+    )
+    if (!selected) {
+      addHide(context, start, start + 1)
+      addHide(context, start + 1 + match[1].length, end)
+    }
   }
 
   // <https://…> 自动链接：与预览的 linkify 对齐，去掉尖括号只留蓝色链接文字
@@ -631,6 +642,9 @@ function buildInlineDecorations(view: EditorView, options: LivePreviewOptions): 
   // 存在非空选区时不把光标行回退成源码：拖选多段时行首标记（## / - / > ）反复显隐，
   // 会让行宽与换行位置在拖动过程中不断变化，高亮看起来就像"追不上"文字。
   const selecting = state.selection.ranges.some((range) => !range.empty)
+  const selectedRanges = state.selection.ranges
+    .filter((range) => !range.empty)
+    .map((range) => ({ from: range.from, to: range.to }))
 
   const pushLine = (lineNo: number, className: string): void => {
     ranges.push(Decoration.line({ class: className }).range(doc.line(lineNo).from))
@@ -654,7 +668,14 @@ function buildInlineDecorations(view: EditorView, options: LivePreviewOptions): 
       const line = doc.line(lineNo)
       // 锁定后所有行都按成稿显示标记隐藏，不随光标位置回退
       const hideMarkers = locked || selecting || lineNo !== cursorLine
-      const context: InlineContext = { ranges, lineFrom: line.from, hideMarkers, documentId, loadRemote }
+      const context: InlineContext = {
+        ranges,
+        lineFrom: line.from,
+        hideMarkers,
+        documentId,
+        loadRemote,
+        selection: selectedRanges
+      }
 
       switch (block.type) {
         case 'frontmatter':

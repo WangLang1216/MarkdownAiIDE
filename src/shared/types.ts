@@ -50,6 +50,8 @@ export interface SaveResult {
   snapshot: DocumentSnapshot
   /** 供界面显示的结果或错误说明。 */
   message?: string
+  /** 本次保存把多少处内联 base64 图片改写为本地相对路径。 */
+  convertedImages?: number
 }
 
 /** 描述内存文稿与外部磁盘内容的冲突，供界面提示和选择处理方式。 */
@@ -866,6 +868,18 @@ export interface InsertedImage {
   size: number
 }
 
+/** 未落盘文稿选取的图片：只带回 base64，保存时再写入资源目录。 */
+export interface PickedImageData {
+  /** 可直接写进 Markdown 的 data URL。 */
+  dataUrl: string
+  /** 图片文件名，用于生成替代文字。 */
+  name: string
+  /** 图片 MIME 类型。 */
+  mime: string
+  /** 原始字节数。 */
+  size: number
+}
+
 /** 图片预览：统一返回 data URL，避免渲染进程直接读盘 */
 export interface ImagePreviewData {
   /** 读取附件并编码为可传给界面或模型的 data URL。 */
@@ -1199,8 +1213,6 @@ export interface AppInfo {
   safeStorage: { available: boolean; backend: string }
   pandoc: PandocStatus
   demoWorkspacePath: string | null
-  /** 桌面应用图标的 data URL，用于“关于”弹窗；读取失败时为 null */
-  iconDataUrl: string | null
 }
 
 /** 封装 IPC 成功数据或结构化错误，供预加载层解包。 */

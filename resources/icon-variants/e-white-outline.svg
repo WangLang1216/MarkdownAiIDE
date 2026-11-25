@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect x="24" y="24" width="464" height="464" rx="98" fill="none" stroke="#ffffff" stroke-width="8"/>
+  <text x="208" y="346" font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-weight="700" font-size="276" fill="#ffffff" text-anchor="middle">x</text>
+  <circle cx="354" cy="324" r="22" fill="#ffffff"/>
+  <text x="256" y="418" font-family="'Segoe UI', 'Microsoft YaHei', sans-serif" font-size="38" letter-spacing="6" fill="#ffffff" text-anchor="middle">小彭友</text>
+</svg>

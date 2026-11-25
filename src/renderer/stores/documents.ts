@@ -7,6 +7,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { DiskConflictInfo, DocumentSnapshot, RecoveryEntry, SaveResult } from '@shared/types'
 import { applyEditsToText } from '@shared/markdown/edits'
+import { collectDataImageRefs } from '@shared/markdown/images'
 import { useSettingsStore } from './settings'
 import { useUiStore } from './ui'
 import { editorApi } from '../lib/editorApi'
@@ -304,6 +305,14 @@ export const useDocumentsStore = defineStore('documents', () => {
   function applySaveResult(tab: TabState, result: SaveResult, silent: boolean): boolean {
     tab.snapshot = mergeSnapshot(tab.snapshot, result.snapshot)
     if (result.status === 'saved') {
+      // 保存时内联图片被改写成相对路径：同步回编辑器，避免界面仍显示 base64。
+      // 只在编辑器里还留着 data URL 时回写，避免覆盖保存期间刚敲入的新内容。
+      if (result.convertedImages && activeId.value === tab.snapshot.documentId && editorApi.current) {
+        const current = editorApi.current.getText()
+        if (current !== result.snapshot.text && collectDataImageRefs(current).length) {
+          editorApi.current.setText(result.snapshot.text)
+        }
+      }
       tab.saveState = 'saved'
       tab.lastSavedAt = Date.now()
       tab.message = result.message ?? null

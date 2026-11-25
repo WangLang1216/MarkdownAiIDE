@@ -1,6 +1,6 @@
 {
   "name": "moye-markdown-ide",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "小彭友 · 本地优先的 Markdown 桌面编辑器，内置文档 Agent",
   "main": "./out/main/index.js",
   "author": "MoYe Contributors",

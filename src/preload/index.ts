@@ -74,6 +74,7 @@ const api: DesktopAPI = {
     recoveryDiscard: (documentId) => invoke(IPC.documents.recoveryDiscard, documentId),
     inlineImages: (documentId, urls) => invoke(IPC.documents.inlineImages, documentId, urls),
     pickImage: (documentId) => invoke(IPC.documents.pickImage, documentId),
+    pickImageData: () => invoke(IPC.documents.pickImageData),
     saveImage: (documentId, name, mime, bytes) =>
       invoke(IPC.documents.saveImage, documentId, name, mime, bytes)
   },

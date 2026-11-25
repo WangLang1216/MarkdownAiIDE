@@ -3,6 +3,7 @@
  * 关于弹窗：项目信息、作者、日期与仓库地址。
  */
 import { computed } from 'vue'
+import { brandIcon } from '../lib/brandIcon'
 import { useSettingsStore } from '../stores/settings'
 import { useUiStore } from '../stores/ui'
 import { useUpdatesStore } from '../stores/updates'
@@ -13,7 +14,8 @@ const ui = useUiStore()
 const updates = useUpdatesStore()
 
 const version = computed(() => settings.appInfo?.version ?? '…')
-const iconDataUrl = computed(() => settings.appInfo?.iconDataUrl ?? null)
+// 图标跟随主题：浅色主题用白底版本，深色主题用深色版本
+const logo = computed(() => brandIcon(settings.isDark))
 const repository = 'https://github.com/WangLang1216/MarkdownAiIDE'
 
 const facts: Array<{ label: string; value: string }> = [
@@ -43,8 +45,7 @@ function openRepository(): void {
       </div>
 
       <div class="about-hero">
-        <img v-if="iconDataUrl" class="about-logo" :src="iconDataUrl" alt="小彭友" />
-        <span v-else class="about-mark">m<span>·</span></span>
+        <img class="about-logo" :src="logo" alt="小彭友" />
         <div>
           <b>版本 {{ version }}</b>
           <small>文稿是普通 Markdown 文件，不建立账号，也不强制云同步。</small>
@@ -103,25 +104,16 @@ function openRepository(): void {
   flex: none;
   border-radius: 10px;
   object-fit: cover;
-  box-shadow: 0 3px 10px rgba(36, 45, 34, 0.14);
+  /* 白底图标放在浅色底上时，用细描边补回卡片边缘 */
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 3px 10px rgba(36, 45, 34, 0.14);
 }
 
-.about-mark {
-  width: 42px;
-  height: 42px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 10px;
-  background: #2d3330;
-  color: #fff;
-  font:
-    bold italic 26px Georgia,
-    serif;
-}
-
-.about-mark span {
-  color: #afc4b6;
+:root[data-theme='dark'] .about-logo {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 3px 10px rgba(0, 0, 0, 0.4);
 }
 
 .about-hero b {

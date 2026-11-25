@@ -80,7 +80,17 @@ export async function saveAsActive(): Promise<void> {
   }
 }
 
-/** 元素面板「图片」：选择本地文件，复制到文稿资源目录后插入相对路径 */
+/** 把本地图片文件读成可直接写进 Markdown 的 data URL。 */
+export function imageFileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error ?? new Error('读取图片失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+/** 元素面板「图片」：未保存文稿先内嵌 base64，已保存文稿复制到资源目录后插入相对路径 */
 export async function insertImageElement(): Promise<void> {
   const documents = useDocumentsStore()
   const ui = useUiStore()
@@ -97,6 +107,19 @@ export async function insertImageElement(): Promise<void> {
     const editor = editorApi.current
     const selection = editor?.getSelection()
     const selected = selection ? editor?.getText().slice(selection.from, selection.to).trim() : ''
+    if (!tab.snapshot.existsOnDisk) {
+      // 草稿还没落盘，资源目录无从确定：先内嵌，保存时再换成相对路径。
+      const inline = await window.api.documents.pickImageData()
+      if (!inline) return
+      if (documents.activeId !== tab.snapshot.documentId || editor !== editorApi.current) return
+      // 方括号必须去掉而不是转义：保存时要靠纯函数识别并重写内联图片语法。
+      const alt = selected
+        ? selected.replace(/\s+/g, ' ').replace(/\[|\]/g, ' ')
+        : inline.name.replace(/\.[^.]+$/, '').replace(/\[|\]/g, ' ')
+      editor?.insertText(`\n![${alt}](${inline.dataUrl})\n`)
+      ui.toast('图片已内嵌到文稿，保存后会写成相对路径', 'info')
+      return
+    }
     const picked = await window.api.documents.pickImage(tab.snapshot.documentId)
     if (!picked) return
     if (documents.activeId !== tab.snapshot.documentId || editor !== editorApi.current) return

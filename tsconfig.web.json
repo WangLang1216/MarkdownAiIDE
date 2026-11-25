@@ -23,5 +23,11 @@
       "@renderer/*": ["src/renderer/*"]
     }
   },
-  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.vue", "src/shared/**/*.ts", "src/preload/index.ts"]
+  "include": [
+    "src/renderer/**/*.ts",
+    "src/renderer/**/*.vue",
+    "src/shared/**/*.ts",
+    "src/preload/index.ts",
+    "tests/unit/snippets.test.ts"
+  ]
 }

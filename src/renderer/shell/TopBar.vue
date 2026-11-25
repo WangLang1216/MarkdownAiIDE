@@ -3,6 +3,7 @@
  * 顶部栏：品牌、菜单、当前文稿、外观与导出、窗口控制。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { brandIcon } from '../lib/brandIcon'
 import { useDocumentsStore } from '../stores/documents'
 import { useSettingsStore } from '../stores/settings'
 import { useUiStore } from '../stores/ui'
@@ -43,6 +44,8 @@ const ui = useUiStore()
 const updates = useUpdatesStore()
 
 const openMenu = ref<MenuName | null>(null)
+// 顶栏品牌图标跟随主题：浅色用白底版，深色用深色版
+const brandIconSrc = computed(() => brandIcon(settings.isDark))
 const menuPosition = ref({ x: 0, y: 0 })
 const isMaximized = ref(false)
 
@@ -229,7 +232,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
 <template>
   <header class="topbar" @dblclick="onTopbarDoubleClick">
     <div class="brand">
-      <span class="brand-wordmark"><span class="brand-initial">X</span>iaopengyou</span>
+      <img class="brand-icon" :src="brandIconSrc" alt="小彭友" />
       <b>小彭友</b>
       <span class="brand-en">MARKDOWN AI IDE</span>
     </div>
@@ -306,23 +309,19 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
   white-space: nowrap;
 }
 
-.brand-wordmark {
-  display: inline-flex;
-  align-items: baseline;
-  justify-content: center;
-  padding: 0 9px;
-  border: 1px solid #4d5a4f;
-  border-radius: 9px;
-  background: linear-gradient(135deg, #333b35, #232a25);
-  color: #f4f7f1;
-  font-family: 'Gabriola', 'Brush Script MT', cursive;
-  font-size: 17px;
-  font-weight: 600;
-  line-height: 28px;
+.brand-icon {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 6px;
+  /* 白底图标落在浅色顶栏上，用一圈细边守住圆角轮廓 */
+  box-shadow: 0 0 0 1px var(--line);
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
-.brand-initial {
-  font-size: 25px;
+:root[data-theme='dark'] .brand-icon {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1);
 }
 
 .menubar button.open {

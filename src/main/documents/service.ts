@@ -11,11 +11,13 @@ import type {
   DocumentSnapshot,
   EolStyle,
   InsertedImage,
+  PickedImageData,
   RecentEntry,
   RecoveryEntry,
   SaveResult
 } from '@shared/types'
 import { AppError } from '@shared/errors'
+import { collectDataImageRefs, rewriteImageRefs } from '@shared/markdown/images'
 import {
   atomicWriteFile,
   isPathInside,
@@ -288,16 +290,74 @@ export class DocumentService {
     return session.snapshot()
   }
 
-  /** 检查外部磁盘变更后保存取样时的正文；未绑定路径时转入另存为。 */
+  /**
+   * 选择保存路径并绑定会话，但不写盘；图片落盘需要先用这个路径确定资源目录。
+   */
+  private async bindSavePath(session: DocumentSession): Promise<boolean> {
+    const workspace = this.workspace.getCurrent()
+    const defaultPath =
+      session.absPath ??
+      (workspace ? join(workspace.rootPath, session.title) : join(appPaths().userData, session.title))
+    const result = await dialog.showSaveDialog({
+      title: '另存为',
+      defaultPath,
+      filters: [
+        { name: 'Markdown', extensions: ['md'] },
+        { name: '纯文本', extensions: ['txt'] }
+      ]
+    })
+    if (result.canceled || !result.filePath) return false
+    const target = resolve(result.filePath)
+    const oldKey = session.absPath ? this.pathKey(session.absPath) : null
+    const insideWorkspace = workspace ? isPathInside(workspace.rootPath, target) : false
+    session.relocate(
+      target,
+      insideWorkspace ? toPosix(relative(workspace!.rootPath, target)) : null,
+      insideWorkspace ? workspace!.workspaceId : null
+    )
+    if (oldKey) this.byPath.delete(oldKey)
+    this.byPath.set(this.pathKey(target), session.documentId)
+    await this.settings.rememberFile(target, session.title)
+    return true
+  }
+
+  /**
+   * 把未落盘时以 base64 内嵌的图片写成资源文件，并把 Markdown 改回相对路径。
+   * 写盘前调用，保证磁盘上和编辑器里最终都是相对引用。
+   */
+  private async persistInlineImages(session: DocumentSession): Promise<number> {
+    const refs = collectDataImageRefs(session.text)
+    if (!refs.length) return 0
+    const mapping = new Map<string, string>()
+    for (const [index, dataUrl] of refs.entries()) {
+      try {
+        const match = /^data:image\/[a-z0-9.+-]+;base64,([a-z0-9+/=\s]+)$/i.exec(dataUrl)
+        if (!match) continue
+        const buffer = Buffer.from(match[1].replace(/\s+/g, ''), 'base64')
+        if (!buffer.length || buffer.length > 12 * 1024 * 1024) continue
+        const saved = await this.writeImage(session.documentId, `inline-${index + 1}`, buffer)
+        mapping.set(dataUrl, `./${saved.relativePath}`)
+      } catch (error) {
+        logger.warn('documents', '内联图片落盘失败，保留原 data URL', {
+          documentId: session.documentId,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      }
+    }
+    if (mapping.size) session.applyText(rewriteImageRefs(session.text, mapping))
+    return mapping.size
+  }
+
+  /** 保存正文；未绑定路径时先选路径，保存前把内联图片转为本地资源。 */
   async save(documentId: string, expectedRevision: number, force = false): Promise<SaveResult> {
     const session = this.getSession(documentId)
-    if (!session.absPath) {
-      const saved = await this.saveAs(documentId)
-      return saved ?? { status: 'failed', snapshot: session.snapshot(), message: '尚未选择保存位置。' }
+    const revisionBeforeSave = session.revision
+    if (!session.absPath && !(await this.bindSavePath(session))) {
+      return { status: 'failed', snapshot: session.snapshot(), message: '尚未选择保存位置。' }
     }
 
     if (!force && session.diskFingerprint) {
-      const disk = await readTextDocument(session.absPath).catch(() => null)
+      const disk = await readTextDocument(session.absPath!).catch(() => null)
       if (disk && disk.fingerprint !== session.diskFingerprint && disk.text !== session.text) {
         const conflict: DiskConflictInfo = {
           documentId,
@@ -310,11 +370,12 @@ export class DocumentService {
       }
     }
 
+    const convertedImages = await this.persistInlineImages(session)
     const textAtSave = session.text
     const revisionAtSave = session.revision
     try {
       const buffer = toDiskText(textAtSave, session.eol, session.hasBom)
-      await atomicWriteFile(session.absPath, buffer)
+      await atomicWriteFile(session.absPath!, buffer)
       session.markSaved(sha256(buffer))
       this.emit(session, 'save')
       if (session.dirty) this.scheduleRecovery(session)
@@ -322,8 +383,9 @@ export class DocumentService {
       return {
         status: 'saved',
         snapshot: session.snapshot(),
+        convertedImages: convertedImages || undefined,
         message:
-          expectedRevision !== revisionAtSave || session.revision !== revisionAtSave
+          expectedRevision !== revisionBeforeSave || session.revision !== revisionAtSave
             ? '已保存当时的版本，但保存期间又有新的修改尚未写入。'
             : undefined
       }
@@ -343,39 +405,20 @@ export class DocumentService {
   /** 让用户选择新路径并将当前文稿写入所选位置。 */
   async saveAs(documentId: string): Promise<SaveResult | null> {
     const session = this.getSession(documentId)
-    const workspace = this.workspace.getCurrent()
-    const defaultPath =
-      session.absPath ??
-      (workspace ? join(workspace.rootPath, session.title) : join(appPaths().userData, session.title))
-    const result = await dialog.showSaveDialog({
-      title: '另存为',
-      defaultPath,
-      filters: [
-        { name: 'Markdown', extensions: ['md'] },
-        { name: '纯文本', extensions: ['txt'] }
-      ]
-    })
-    if (result.canceled || !result.filePath) return null
-
-    const target = result.filePath
+    if (!(await this.bindSavePath(session))) return null
     try {
+      const convertedImages = await this.persistInlineImages(session)
+      const target = session.absPath!
       const buffer = toDiskText(session.text, session.eol, session.hasBom)
       await atomicWriteFile(target, buffer)
-
-      const oldKey = session.absPath ? this.pathKey(session.absPath) : null
-      if (oldKey) this.byPath.delete(oldKey)
-      session.absPath = resolve(target)
-      session.title = basename(target)
-      session.existsOnDisk = true
-      const insideWorkspace = workspace ? isPathInside(workspace.rootPath, session.absPath) : false
-      session.relativePath = insideWorkspace ? toPosix(relative(workspace!.rootPath, session.absPath)) : null
-      session.workspaceId = insideWorkspace ? workspace!.workspaceId : null
-      this.byPath.set(this.pathKey(session.absPath), documentId)
       session.markSaved(sha256(buffer))
-      await this.settings.rememberFile(session.absPath, session.title)
       await this.clearRecovery(documentId)
       this.emit(session, 'save')
-      return { status: 'saved', snapshot: session.snapshot() }
+      return {
+        status: 'saved',
+        snapshot: session.snapshot(),
+        convertedImages: convertedImages || undefined
+      }
     } catch (error) {
       return {
         status: 'failed',
@@ -430,9 +473,8 @@ export class DocumentService {
     }
   }
 
-  /** 弹出文件选择器，复制选中的图片到资源目录 */
-  async pickImage(documentId: string): Promise<InsertedImage | null> {
-    const session = this.getSession(documentId)
+  /** 弹出图片文件选择器，返回原始字节供落盘或内嵌使用。 */
+  private async pickImageFile(): Promise<{ name: string; buffer: Buffer } | null> {
     const result = await dialog.showOpenDialog({
       title: '插入图片',
       properties: ['openFile'],
@@ -443,7 +485,29 @@ export class DocumentService {
     const info = await stat(source).catch(() => null)
     if (!info?.isFile()) throw new AppError('FILE_NOT_FOUND', '图片文件不存在。')
     if (info.size > 12 * 1024 * 1024) throw new AppError('INVALID_INPUT', '图片超过 12MB 限制。')
-    return this.writeImage(session.documentId, basename(source), await readFile(source))
+    return { name: basename(source), buffer: await readFile(source) }
+  }
+
+  /** 弹出文件选择器，复制选中的图片到资源目录 */
+  async pickImage(documentId: string): Promise<InsertedImage | null> {
+    const session = this.getSession(documentId)
+    const picked = await this.pickImageFile()
+    if (!picked) return null
+    return this.writeImage(session.documentId, picked.name, picked.buffer)
+  }
+
+  /** 未保存草稿专用：只返回 base64，等保存时再写入资源目录。 */
+  async pickImageData(): Promise<PickedImageData | null> {
+    const picked = await this.pickImageFile()
+    if (!picked) return null
+    const info = sniffImage(picked.buffer)
+    if (!info) throw new AppError('INVALID_INPUT', '仅支持 PNG、JPEG、WebP、GIF 图片。')
+    return {
+      name: picked.name,
+      mime: info.mime,
+      size: picked.buffer.length,
+      dataUrl: `data:${info.mime};base64,${picked.buffer.toString('base64')}`
+    }
   }
 
   /** 关闭文稿会话并清理对应的恢复草稿。 */

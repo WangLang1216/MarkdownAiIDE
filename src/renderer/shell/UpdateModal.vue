@@ -4,6 +4,7 @@ import Icon from '../components/Icon.vue'
 import { useSettingsStore } from '../stores/settings'
 import { useUiStore } from '../stores/ui'
 import { useUpdatesStore } from '../stores/updates'
+import { releasePageUrl } from '@shared/update'
 
 const ui = useUiStore()
 const settings = useSettingsStore()
@@ -12,7 +13,7 @@ const release = computed(() => updates.state.release)
 const busy = computed(() => ['checking', 'downloading', 'installing'].includes(updates.state.phase))
 
 function openRelease(): void {
-  if (release.value) void window.api.app.openExternal(release.value.url)
+  void window.api.app.openExternal(release.value?.url ?? releasePageUrl)
 }
 </script>
 
@@ -45,8 +46,9 @@ function openRelease(): void {
         <p v-else-if="!release.canInstall">此发行版可从 GitHub 下载并手动安装。</p>
       </template>
       <footer class="modal-footer">
-        <button v-if="release" type="button" class="textbtn" @click="openRelease()">查看发行页</button>
-        <span v-else />
+        <button type="button" class="textbtn" @click="openRelease()">
+          {{ release ? '查看发行页' : '打开发行页' }}
+        </button>
         <div class="update-actions">
           <button type="button" class="ghostbtn" @click="ui.modal = null">{{ release ? '稍后更新' : '关闭' }}</button>
           <button v-if="release?.canInstall" type="button" class="darkbtn" :disabled="busy" @click="updates.install()">

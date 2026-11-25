@@ -1,3 +1,6 @@
+/** 发行页地址：检查失败时供用户手动下载 */
+export const releasePageUrl = 'https://github.com/WangLang1216/MarkdownAiIDE/releases'
+
 export type UpdatePhase =
   'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'ready' | 'installing' | 'error'
 

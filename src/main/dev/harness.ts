@@ -82,6 +82,31 @@ export async function runVisualHarness(window: BrowserWindow): Promise<void> {
   try {
     await prepareUi(window)
 
+    // 打开“关于”弹窗，用于核对品牌图标是否随主题切换
+    if (process.env.MDIDE_UI_OPEN_ABOUT === '1') {
+      await clickByText(window, '帮助')
+      await delay(250)
+      await clickByText(window, '关于小彭友', '.popup button')
+      await delay(700)
+    }
+
+    // 从当前弹窗再开一层子弹窗，可选再关掉它，用于验证是否退回上一层
+    if (process.env.MDIDE_UI_MODAL_CHILD) {
+      await clickByText(window, process.env.MDIDE_UI_MODAL_CHILD, '.modal button')
+      await delay(700)
+      if (process.env.MDIDE_UI_MODAL_CLOSE === '1') {
+        await window.webContents.executeJavaScript(`
+          (() => {
+            const btn = document.querySelector('.modal [aria-label="关闭"]');
+            if (!btn) return false;
+            btn.click();
+            return true;
+          })()
+        `)
+        await delay(600)
+      }
+    }
+
     if (process.env.MDIDE_UI_OPEN_FILE) {
       await window.webContents.executeJavaScript(
         `window.api.documents.openPath(${JSON.stringify(process.env.MDIDE_UI_OPEN_FILE)}).catch(() => null); true;`

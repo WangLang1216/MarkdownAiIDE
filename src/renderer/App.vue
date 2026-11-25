@@ -3,7 +3,7 @@
  * 应用外壳：三栏布局、全局快捷键、事件订阅与恢复草稿提示。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import appIcon from '../../resources/icon.png'
+import { brandIcon } from './lib/brandIcon'
 import { useSettingsStore } from './stores/settings'
 import { useDocumentsStore } from './stores/documents'
 import { useWorkspaceStore } from './stores/workspace'
@@ -45,6 +45,9 @@ const appStyle = computed(() => ({
   '--right': `${ui.rightWidth}px`,
   '--editor-zoom': String(ui.zoom / 100)
 }))
+
+// 启动页图标跟随主题：浅色用白底、深色用深色底
+const appIcon = computed(() => brandIcon(settings.isDark))
 
 const recoveryList = computed(() => documents.recoveries.slice(0, 3))
 
@@ -226,7 +229,10 @@ onBeforeUnmount(() => {
   width: 56px;
   height: 56px;
   border-radius: 13px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+  /* 浅色主题下白底图标与页面同色，需要一圈细描边留住卡片轮廓 */
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 10px 30px rgba(0, 0, 0, 0.12);
   user-select: none;
   -webkit-user-drag: none;
 }

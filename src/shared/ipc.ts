@@ -43,7 +43,8 @@ import type {
   ExportPdfResult,
   ChangeSetRecord,
   ImagePreviewData,
-  InsertedImage
+  InsertedImage,
+  PickedImageData
 } from './types'
 import type { ErrorCode } from './errors'
 
@@ -79,6 +80,7 @@ export const IPC = {
     recoveryDiscard: 'documents:recovery-discard',
     inlineImages: 'documents:inline-images',
     pickImage: 'documents:pick-image',
+    pickImageData: 'documents:pick-image-data',
     saveImage: 'documents:save-image'
   },
   workspace: {
@@ -352,6 +354,8 @@ export interface DesktopAPI {
     inlineImages(documentId: string, urls: string[]): Promise<Record<string, string>>
     /** 选择本地图片，复制到文稿同级资源目录并返回相对路径 */
     pickImage(documentId: string): Promise<InsertedImage | null>
+    /** 为未保存文稿选取图片：只返回 base64，保存时再落盘 */
+    pickImageData(): Promise<PickedImageData | null>
     /** 把粘贴/拖入的图片写入文稿同级资源目录 */
     saveImage(
       documentId: string | null,

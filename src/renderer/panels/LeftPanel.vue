@@ -6,7 +6,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useUiStore } from '../stores/ui'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useDocumentsStore } from '../stores/documents'
-import { ELEMENT_SNIPPETS, EXTENDED_SNIPPETS, MODULE_SNIPPETS, importedTemplates, importContentTemplate, deleteContentTemplate } from '../editor/snippets'
+import {
+  ELEMENT_SNIPPETS,
+  EXTENDED_SNIPPETS,
+  MODULE_SNIPPETS,
+  importedTemplates,
+  importContentTemplate,
+  deleteContentTemplate
+} from '../editor/snippets'
 import { editorApi } from '../lib/editorApi'
 import { insertImageElement } from '../lib/actions'
 import Icon from '../components/Icon.vue'
@@ -487,7 +494,14 @@ async function switchWorkspace(): Promise<void> {
           内容模板
         </button>
         <button class="textbtn" @click="templateInput?.click()">导入模板</button>
-        <input ref="templateInput" type="file" accept=".md,.markdown,.txt" multiple hidden @change="importTemplates" />
+        <input
+          ref="templateInput"
+          type="file"
+          accept=".md,.markdown,.txt"
+          multiple
+          hidden
+          @change="importTemplates"
+        />
       </div>
       <div v-show="!moduleCollapsed || elementQuery" id="module-list" class="module-list">
         <div
@@ -508,14 +522,19 @@ async function switchWorkspace(): Promise<void> {
           >
             <span class="module-icon">
               <span v-if="item.id === 'math'" class="math-icon">ƒ</span>
-              <Icon v-else :name="item.id === 'mermaid' ? 'workflow' : 'file'" :size="15" />
+              <Icon v-else :name="item.icon ?? (item.id === 'mermaid' ? 'workflow' : 'file')" :size="15" />
             </span>
             <span
               >{{ item.label }}<small>{{ item.description }}</small></span
             >
           </button>
-          <button v-if="item.id.startsWith('imported-')" type="button" class="template-delete iconbtn"
-            :aria-label="'删除模板 ' + item.label" @click.stop="removeTemplate(item.id)">
+          <button
+            v-if="item.id.startsWith('imported-')"
+            type="button"
+            class="template-delete iconbtn"
+            :aria-label="'删除模板 ' + item.label"
+            @click.stop="removeTemplate(item.id)"
+          >
             <Icon name="x" :size="12" />
           </button>
           <span
@@ -652,6 +671,14 @@ async function switchWorkspace(): Promise<void> {
 </template>
 
 <style scoped>
-.searchbox input:focus-visible { outline: none; }
-.template-delete { position: absolute; right: 4px; top: 4px; width: 22px; height: 22px; }
+.searchbox input:focus-visible {
+  outline: none;
+}
+.template-delete {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  width: 22px;
+  height: 22px;
+}
 </style>

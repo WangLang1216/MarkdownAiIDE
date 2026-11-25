@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  collectDataImageRefs,
   collectImageRefs,
   isLocalImageRef,
   rewriteImageRefs,
@@ -30,6 +31,30 @@ describe('collectImageRefs', () => {
     expect(isLocalImageRef('file:///tmp/a.png')).toBe(false)
     expect(isLocalImageRef('#anchor')).toBe(false)
     expect(isLocalImageRef('')).toBe(false)
+  })
+})
+
+describe('collectDataImageRefs', () => {
+  it('collects inline images once and ignores local or remote refs', () => {
+    const markdown = [
+      '![一](data:image/png;base64,AAAA)',
+      '![二](data:image/png;base64,AAAA)',
+      '![三](data:image/jpeg;base64,BBBB "标题")',
+      '![四](./assets/a.png)',
+      '![五](https://example.com/b.png)'
+    ].join('\n')
+    expect(collectDataImageRefs(markdown)).toEqual([
+      'data:image/png;base64,AAAA',
+      'data:image/jpeg;base64,BBBB'
+    ])
+  })
+
+  it('rewrites data URLs back to relative paths when saving', () => {
+    const markdown = '![一](data:image/png;base64,AAAA) 与 ![二](data:image/jpeg;base64,BBBB)'
+    expect(rewriteImageRefs(markdown, new Map([
+      ['data:image/png;base64,AAAA', './assets/a1.png'],
+      ['data:image/jpeg;base64,BBBB', './assets/b2.jpg']
+    ]))).toBe('![一](./assets/a1.png) 与 ![二](./assets/b2.jpg)')
   })
 })
 

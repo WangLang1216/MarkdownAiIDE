@@ -22,7 +22,6 @@ import { AppError, toErrorInfo } from '@shared/errors'
 import { isPathInside } from '../utils/fs'
 import { pathExists } from '../utils/fs'
 import { appPaths, configureCacheDir } from '../utils/paths'
-import { appIconDataUrl } from '../app/icon'
 import type { UpdateService } from '../app/updates'
 import type { SettingsStore } from '../settings/store'
 import type { SecretService } from '../secrets/service'
@@ -136,8 +135,7 @@ export function registerIpc(context: IpcContext): void {
       workspace: current,
       safeStorage: { available: context.secrets.isEncryptionAvailable(), backend: context.secrets.backend() },
       pandoc,
-      demoWorkspacePath: demoExists ? appPaths().demoWorkspace : null,
-      iconDataUrl: await appIconDataUrl()
+      demoWorkspacePath: demoExists ? appPaths().demoWorkspace : null
     }
   })
 
@@ -282,6 +280,8 @@ export function registerIpc(context: IpcContext): void {
   handle(IPC.documents.pickImage, async (documentId) =>
     context.documents.pickImage(asString(documentId, '文档 ID'))
   )
+
+  handle(IPC.documents.pickImageData, async () => context.documents.pickImageData())
 
   handle(IPC.documents.saveImage, async (documentId, name, _mime, bytes) => {
     if (!(bytes instanceof ArrayBuffer)) throw new AppError('INVALID_INPUT', '图片数据格式不正确。')

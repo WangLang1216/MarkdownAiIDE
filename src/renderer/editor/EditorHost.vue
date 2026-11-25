@@ -13,7 +13,7 @@ import { EditorController } from './createEditor'
 import SelectionMenu from './SelectionMenu.vue'
 import EmojiPicker from './EmojiPicker.vue'
 import { editorApi } from '../lib/editorApi'
-import { insertImageElement } from '../lib/actions'
+import { imageFileToDataUrl, insertImageElement } from '../lib/actions'
 
 type ContextAction =
   | 'mark'
@@ -109,6 +109,15 @@ async function handleImageFile(file: File): Promise<void> {
     if (!documentId) {
       await agent.addAttachmentBytes(name, file.type, buffer)
       ui.toast('已添加为 AI 参考图片（先打开文稿才能写入本地图片）', 'info')
+      return
+    }
+    if (!documents.activeTab?.snapshot.existsOnDisk) {
+      // 未保存草稿先内嵌 base64，保存时由主进程落盘并改回相对路径。
+      const dataUrl = await imageFileToDataUrl(file)
+      if (documentId !== documents.activeId) return
+      const alt = name.replace(/\.[^.]+$/, '').replace(/\[|\]/g, ' ')
+      editorApi.current?.insertText(`\n![${alt}](${dataUrl})\n`)
+      ui.toast('图片已内嵌到文稿，保存后会写成相对路径', 'info')
       return
     }
     const saved = await window.api.documents.saveImage(documentId, name, file.type, buffer)
@@ -507,8 +516,11 @@ watch(
 )
 
 function onDragOver(event: DragEvent): void {
-  if (event.dataTransfer?.types.includes('Files') &&
-      !Array.from(event.dataTransfer.items).some((item) => item.type.startsWith('image/'))) return
+  if (
+    event.dataTransfer?.types.includes('Files') &&
+    !Array.from(event.dataTransfer.items).some((item) => item.type.startsWith('image/'))
+  )
+    return
   event.preventDefault()
   dragging.value = true
 }
@@ -547,7 +559,7 @@ defineExpose({ focus: () => controller.value?.focus() })
   <div
     ref="host"
     class="editor-host"
-    :class="{ 'drag-over': dragging }"
+    :class="{ 'drag-over': dragging, empty: isEmpty }"
     @moye-outline-jump="onDocumentTocJump"
     @click.capture="previewDocumentImage"
     @keydown.enter.capture="previewDocumentImage"
@@ -556,8 +568,11 @@ defineExpose({ focus: () => controller.value?.focus() })
     @drop="onDrop"
   >
     <div v-if="isEmpty" class="editor-empty">
-      <p>还没有打开的文档</p>
-      <button class="ghostbtn" @click="documents.newUntitled()">新建文稿</button>
+      <div class="welcome">
+        <h1 class="welcome-title">让想法，自然成文</h1>
+        <p class="welcome-subtitle">一个安静的空间，装下你所有的灵感。</p>
+        <button type="button" class="welcome-start" @click="documents.newUntitled()">从一段文字开始</button>
+      </div>
     </div>
     <SelectionMenu
       v-if="menu"
@@ -593,20 +608,82 @@ defineExpose({ focus: () => controller.value?.focus() })
   min-height: 0;
 }
 
+/* 无标签时旧编辑器仍挂载着，先藏起来，避免底层占位文字透出来 */
+.editor-host.empty :deep(.cm-editor) {
+  visibility: hidden;
+}
+
 .editor-empty {
   position: absolute;
   inset: 0;
+  z-index: 2;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 14px;
-  color: var(--muted);
-  font-size: 12px;
-  pointer-events: none;
+  background:
+    radial-gradient(58% 46% at 78% 16%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 72%),
+    radial-gradient(46% 38% at 12% 84%, color-mix(in srgb, var(--accent) 4%, transparent), transparent 74%),
+    var(--page);
 }
 
-.editor-empty button {
-  pointer-events: auto;
+.welcome {
+  width: min(680px, calc(100% - 96px));
+  margin-left: clamp(48px, 8vw, 116px);
+}
+
+.welcome-title {
+  margin: 0;
+  color: var(--text);
+  font-family: 'Songti SC', 'Source Han Serif SC', 'Noto Serif CJK SC', SimSun, serif;
+  font-size: clamp(34px, 3.4vw, 46px);
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+}
+
+.welcome-subtitle {
+  margin: 20px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.9;
+  letter-spacing: 0.12em;
+}
+
+.welcome-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 34px;
+  padding: 0 0 7px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 0;
+  background: none;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  cursor: pointer;
+  transition:
+    color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.welcome-start::after {
+  content: '→';
+  font-family: var(--ui-font);
+  font-size: 15px;
+  line-height: 1;
+  letter-spacing: 0;
+  transition: transform 0.18s ease;
+}
+
+.welcome-start:hover {
+  color: var(--accent-strong);
+  border-bottom-color: var(--accent-strong);
+}
+
+.welcome-start:hover::after {
+  transform: translateX(4px);
 }
 </style>

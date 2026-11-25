@@ -4,6 +4,7 @@
 
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { popModal, pushModal } from '@shared/modal'
 import type { ContentWidth, EditorMode } from '../types'
 
 /** 限定界面状态库可切换的弹窗类型。 */
@@ -60,7 +61,18 @@ export const useUiStore = defineStore('ui', () => {
   // 锁定只作用于当次阅读：不持久化，打开或切换文稿时由 App 重置
   const locked = ref(false)
   const zoom = ref(readNumber('moye.zoom', 100, 80, 140))
-  const modal = ref<ModalName>(null)
+  /**
+   * 弹窗按层级堆叠：打开新弹窗压栈，关闭只退栈顶一层。
+   * 这样从「关于」进入快捷键/更新等子弹窗后，关闭子弹窗会回到「关于」而不是全部关掉。
+   * 外部仍按 `ui.modal = 'about' / null` 读写，写入等价于压栈 / 退栈。
+   */
+  const modalStack = ref<Array<Exclude<ModalName, null>>>([])
+  const modal = computed<ModalName>({
+    get: () => modalStack.value[modalStack.value.length - 1] ?? null,
+    set: (next) => {
+      modalStack.value = next === null ? popModal(modalStack.value) : pushModal(modalStack.value, next)
+    }
+  })
   const toasts = ref<ToastItem[]>([])
   const confirmState = ref<ConfirmState | null>(null)
   const reviewOpen = ref(false)

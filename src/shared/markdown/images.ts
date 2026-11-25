@@ -6,6 +6,19 @@
 /** ![alt](src "title")，只捕获 src 部分 */
 export const IMAGE_REF = /(!\[[^\]]*\]\()([^)\s]+)((?:\s+"[^"]*")?\))/g
 
+/** 内联图片的 data URL；空白符允许出现在 base64 中。 */
+const DATA_IMAGE_REF = /^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+$/i
+
+/** 按首次出现顺序收集 Markdown 中不同的内联图片 data URL。 */
+export function collectDataImageRefs(markdown: string): string[] {
+  const refs = new Set<string>()
+  for (const match of markdown.matchAll(IMAGE_REF)) {
+    const src = match[2]
+    if (DATA_IMAGE_REF.test(src)) refs.add(src)
+  }
+  return [...refs]
+}
+
 /** 远程地址、data URL、自定义协议与纯锚点不参与打包 */
 export function isLocalImageRef(src: string): boolean {
   const value = src.trim().replace(/^<|>$/g, '')

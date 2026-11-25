@@ -82,7 +82,21 @@ export const ICON_PATHS: Record<string, string> = {
   bookmark: '<path d="M6 3h12v18l-6-4-6 4z"/>',
   lock: '<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
   unlock: '<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 7.5-2"/>',
-  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>'
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
+  /* 内容模板：气泡星光标表示提示词，文本框与图片上下组合表示文生图/图生文，
+     清单勾与日历勾/柱状图分别对应纪要、日报与周报。 */
+  prompt:
+    '<path d="M4 4h16v11H9l-5 4V4Z"/><path d="m12 7 1 2.2 2.2 1-2.2 1L12 13.4 11 11.2 8.8 10.2l2.2-1z"/>',
+  'text-to-image':
+    '<path d="M4 5h11M4 9h7"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><circle cx="8" cy="16.5" r="1"/><path d="m4 19 4.5-4 3.5 3 2.5-2.5L20 19"/>',
+  'image-to-text':
+    '<rect x="3" y="3" width="18" height="10" rx="1.5"/><circle cx="8" cy="6.5" r="1"/><path d="m4 12 4-4 3 3 2.5-2.5L20 12"/><path d="M4 17h13M4 21h9"/>',
+  minutes:
+    '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11M3.5 18l1.5 1.5L7.5 17"/>',
+  daily:
+    '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="m9 15.5 2 2 4-4"/>',
+  weekly:
+    '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 19v-4m4 4V11m4 8v-6"/>'
 }
 
 /** 由图标路径表派生的可用图标名称清单。 */
