@@ -6,6 +6,7 @@
 import { EditorSelection } from '@codemirror/state'
 import { EditorView, WidgetType } from '@codemirror/view'
 import katex from 'katex'
+import { serializeTable, type TableAlign } from '@shared/markdown/table'
 import { resolveImageSrc, renderInlineMarkdown, renderMermaidToSvg } from '../lib/markdown'
 import { highlightCode } from '../lib/highlight'
 
@@ -125,83 +126,476 @@ export class HrWidget extends WidgetType {
   }
 }
 
-/** 为表格 Widget 提供表头、数据行、对齐方式和源码起点。 */
+/** 为表格 Widget 提供表头、数据行、对齐方式和源码区间。 */
 export interface TableSpec {
   /** 表格第一行的有序表头单元格。 */
   header: string[]
   /** 表头以外、按原顺序排列的数据行。 */
   rows: string[][]
   /** 与表头列对应的对齐方式。 */
-  aligns: Array<'left' | 'center' | 'right'>
-  /** 表格在编辑缓冲区中的位置，用于返回源码编辑。 */
+  aligns: TableAlign[]
+  /** 表格在编辑缓冲区中的起点。 */
   sourcePos: number
-  /** 页面锁定：禁用「点击进入表格源码」。 */
+  /** 表格最后一行的终点（不含），用于整段回写。 */
+  sourceEnd: number
+  /** 页面锁定：只读展示，不进入编辑。 */
   locked?: boolean
 }
 
-/** 将表格源码渲染为只读 HTML 表格，并支持回到源码编辑。 */
+/**
+ * 表格 Widget：阅读态渲染成 HTML 表格，点击就地进入类似 Excel 的编辑态。
+ *
+ * 编辑态用 input 而不是 contenteditable：输入框的 value 不改变 CodeMirror 的文档 DOM，
+ * 不会被编辑器的 DOM 观察器当成外部改写而回滚。单元格输入只存在内存里，
+ * 点击完成、焦点离开表格或按 Esc 时才整段回写一次 Markdown，一次编辑只占一个撤销步。
+ */
 export class TableWidget extends WidgetType {
-  /** 保存表格的解析结果，供渲染及定位源码使用。 */
+  private header: string[]
+  private rows: string[][]
+  private aligns: TableAlign[]
+  /** 创建时的文档快照：eq 用它判断能否复用 DOM，避免编辑中的改动被重建覆盖 */
+  private readonly base: TableSpec
+  private wrap: HTMLElement | null = null
+  private bar: HTMLElement | null = null
+  private tableEl: HTMLTableElement | null = null
+  private block: HTMLElement | null = null
+  private plus: HTMLButtonElement | null = null
+  private editing = false
+  private active = { row: -1, col: 0 }
+  /** 悬浮加号当前指向的插入点：列边界或行边界 */
+  private hoverInsert: { kind: 'col' | 'row'; index: number } | null = null
+  private rebuilding = false
+  private detachOutside: (() => void) | null = null
+
+  /** 保存表格的解析结果，供渲染、编辑及定位源码使用。 */
   constructor(readonly spec: TableSpec) {
     super()
+    this.header = [...spec.header]
+    this.rows = spec.rows.map((row) => [...row])
+    this.aligns = [...spec.aligns]
+    this.base = {
+      ...spec,
+      header: [...spec.header],
+      rows: spec.rows.map((row) => [...row]),
+      aligns: [...spec.aligns]
+    }
   }
 
-  /** 比较同类装饰实例中影响渲染的数据，供 CodeMirror 判断能否复用 DOM。 */
+  /** 比较创建时的文档快照，而不是编辑中的缓冲区，避免输入过程中 DOM 被替换。 */
   override eq(other: WidgetType): boolean {
     if (!(other instanceof TableWidget)) return false
+    const a = this.base
+    const b = other.spec
     return (
-      other.spec.sourcePos === this.spec.sourcePos &&
-      other.spec.locked === this.spec.locked &&
-      JSON.stringify(other.spec.header) === JSON.stringify(this.spec.header) &&
-      JSON.stringify(other.spec.rows) === JSON.stringify(this.spec.rows) &&
-      JSON.stringify(other.spec.aligns) === JSON.stringify(this.spec.aligns)
+      a.sourcePos === b.sourcePos &&
+      a.sourceEnd === b.sourceEnd &&
+      a.locked === b.locked &&
+      JSON.stringify(a.header) === JSON.stringify(b.header) &&
+      JSON.stringify(a.rows) === JSON.stringify(b.rows) &&
+      JSON.stringify(a.aligns) === JSON.stringify(b.aligns)
     )
   }
 
-  /** 构造当前 Markdown 装饰对应的浏览器节点。 */
+  /** 构造阅读态表格，并挂上进入编辑态所需的工具条与键盘事件。 */
   override toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement('div')
     wrap.className = 'cm-widget-table'
-    wrap.title = this.spec.locked ? '页面已锁定' : '点击进入表格源码'
-    const table = document.createElement('table')
-    const thead = document.createElement('thead')
-    const headRow = document.createElement('tr')
-    this.spec.header.forEach((cell, index) => {
-      const th = document.createElement('th')
-      th.innerHTML = renderInlineMarkdown(cell)
-      th.style.textAlign = this.spec.aligns[index] ?? 'left'
-      headRow.append(th)
+    wrap.title = this.spec.locked ? '页面已锁定' : '点击编辑表格'
+
+    const bar = document.createElement('div')
+    bar.className = 'table-editor-bar'
+    bar.hidden = true
+    // 工具条属于控件：拦下 mousedown，既不让 CodeMirror 抢事件，也不把焦点从输入框移走
+    bar.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
     })
-    thead.append(headRow)
-    table.append(thead)
-    const tbody = document.createElement('tbody')
-    for (const row of this.spec.rows) {
-      const tr = document.createElement('tr')
-      row.forEach((cell, index) => {
-        const td = document.createElement('td')
-        td.innerHTML = renderInlineMarkdown(cell)
-        td.style.textAlign = this.spec.aligns[index] ?? 'left'
-        tr.append(td)
-      })
-      tbody.append(tr)
-    }
-    table.append(tbody)
-    wrap.append(table)
-    if (!this.spec.locked) {
-      wrap.addEventListener('click', () => {
-        view.dispatch({
-          selection: EditorSelection.cursor(Math.min(this.spec.sourcePos, view.state.doc.length)),
-          scrollIntoView: true
-        })
-        view.focus()
-      })
-    }
-    return spacedBlock(wrap)
+    bar.append(
+      this.actionButton('insert-row', '插入行', () => this.mutate('insert-row')),
+      this.actionButton('insert-col', '插入列', () => this.mutate('insert-col')),
+      this.actionButton('delete-row', '删除行', () => this.mutate('delete-row')),
+      this.actionButton('delete-col', '删除列', () => this.mutate('delete-col'))
+    )
+    const spacer = document.createElement('span')
+    spacer.className = 'spacer'
+    const source = this.actionButton('source', '源码', () => this.commit(view, true))
+    source.classList.add('source')
+    const done = this.actionButton('done', '完成', () => this.commit(view))
+    done.classList.add('done')
+    bar.append(spacer, source, done)
+
+    const scroll = document.createElement('div')
+    scroll.className = 'table-scroll'
+    const table = document.createElement('table')
+    const plus = document.createElement('button')
+    plus.type = 'button'
+    plus.className = 'table-insert'
+    plus.textContent = '+'
+    plus.hidden = true
+    plus.setAttribute('aria-label', '在此处插入')
+    // 加号是控件：按下时不抢走输入框焦点，也不把事件交给 CodeMirror
+    plus.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+    })
+    plus.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      this.insertAtPointer()
+    })
+    scroll.append(table)
+    wrap.append(bar, scroll)
+
+    // 阅读态点击表格：在捕获阶段就拦住，避免 CodeMirror 把光标移进表格块。
+    // 只靠 WidgetType.ignoreEvent 在部分点击序列（双击、拖选）下仍可能漏给编辑器，
+    // 一旦光标落进 block，即时渲染会立刻把整块切成源码。
+    wrap.addEventListener(
+      'mousedown',
+      (event) => {
+        if (this.editing || this.spec.locked) return
+        event.preventDefault()
+        event.stopPropagation()
+        const cell = (event.target as HTMLElement).closest('th, td') as HTMLTableCellElement | null
+        const parent = cell?.parentElement as HTMLTableRowElement | null
+        const row = parent ? parent.rowIndex - 1 : -1
+        this.active = { row: Math.max(-1, row), col: cell?.cellIndex ?? 0 }
+        this.beginEdit(view)
+      },
+      true
+    )
+    wrap.addEventListener('focusout', (event) => this.onFocusOut(view, event))
+    wrap.addEventListener('keydown', (event) => this.onKeydown(view, event))
+
+    // 加号挂在卡片外层：阅读态被 overflow:hidden 裁掉，且要能悬停到表格边缘外侧
+    const block = spacedBlock(wrap)
+    block.classList.add('table-block')
+    block.append(plus)
+    block.addEventListener('mousemove', (event) => this.onHover(event))
+    block.addEventListener('mouseleave', () => this.hidePlus())
+
+    this.wrap = wrap
+    this.bar = bar
+    this.tableEl = table
+    this.block = block
+    this.plus = plus
+    this.renderTable()
+    return block
   }
 
-  /** 向 CodeMirror 声明是否忽略属于当前装饰的事件。 */
+  /** 组件被回收时清掉挂在 document 上的监听。 */
+  override destroy(): void {
+    this.detachOutside?.()
+    this.detachOutside = null
+    this.editing = false
+    this.wrap = null
+    this.bar = null
+    this.tableEl = null
+    this.block = null
+    this.plus = null
+  }
+
+  /** 表格内部的点击与输入由自己处理，光标不落进表格源码。 */
   override ignoreEvent(): boolean {
-    return false
+    return true
+  }
+
+  private actionButton(action: string, label: string, run: () => void): HTMLButtonElement {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.dataset.action = action
+    button.textContent = label
+    button.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      run()
+    })
+    return button
+  }
+
+  /** 按当前模式重建表格 DOM，并同步工具条显隐与按钮可用状态。 */
+  private renderTable(): void {
+    const table = this.tableEl
+    if (!table) return
+    this.hidePlus()
+    table.textContent = ''
+    const thead = document.createElement('thead')
+    thead.append(this.buildRow(-1, this.header, 'th'))
+    table.append(thead)
+    const tbody = document.createElement('tbody')
+    this.rows.forEach((cells, index) => tbody.append(this.buildRow(index, cells, 'td')))
+    table.append(tbody)
+    if (this.bar) this.bar.hidden = !this.editing
+    this.wrap?.classList.toggle('editing', this.editing)
+    this.syncBar()
+  }
+
+  /** 阅读态渲染行内 Markdown，编辑态换成只保留原始文本的输入框。 */
+  private buildRow(row: number, cells: string[], tag: 'th' | 'td'): HTMLTableRowElement {
+    const tr = document.createElement('tr')
+    cells.forEach((text, col) => {
+      const cell = document.createElement(tag)
+      cell.style.textAlign = this.aligns[col] ?? 'left'
+      if (this.editing) {
+        const input = document.createElement('input')
+        input.type = 'text'
+        input.className = 'cell-input'
+        input.value = text
+        input.dataset.cell = `${row}:${col}`
+        input.setAttribute('aria-label', `${row === -1 ? '表头' : `第 ${row + 1} 行`}第 ${col + 1} 列`)
+        cell.append(input)
+      } else {
+        cell.innerHTML = renderInlineMarkdown(text)
+      }
+      tr.append(cell)
+    })
+    return tr
+  }
+
+  private syncBar(): void {
+    if (!this.bar) return
+    const deleteRow = this.bar.querySelector<HTMLButtonElement>('[data-action="delete-row"]')
+    const deleteCol = this.bar.querySelector<HTMLButtonElement>('[data-action="delete-col"]')
+    if (deleteRow) deleteRow.disabled = this.active.row < 0 || !this.rows.length
+    if (deleteCol) deleteCol.disabled = this.header.length <= 1
+  }
+
+  /** 鼠标靠近列/行间隙时，在间隙处浮出圆形加号，点一下就在该位置插入。 */
+  private onHover(event: MouseEvent): void {
+    if (!this.editing || !this.tableEl || !this.block || !this.plus) return
+    const tableRect = this.tableEl.getBoundingClientRect()
+    const blockRect = this.block.getBoundingClientRect()
+    // 编辑器按 80%–140% 做 CSS zoom：rect 是缩放后的视口像素，
+    // 而 style.left/top 用的是未缩放的布局像素，换算时要按宽高比还原
+    const scale = this.block.offsetWidth ? blockRect.width / this.block.offsetWidth : 1
+    const x = event.clientX
+    const y = event.clientY
+    const near = 6 * scale
+    if (
+      x < tableRect.left - near ||
+      x > tableRect.right + near ||
+      y < tableRect.top - near ||
+      y > tableRect.bottom + near
+    ) {
+      this.hidePlus()
+      return
+    }
+
+    // 列边界：首列左缘是「插到第 0 列」，之后每列右缘是「插到该列之后」
+    const colHits: Array<{ index: number; x: number; distance: number }> = []
+    this.tableEl.querySelectorAll('thead th').forEach((cell, index) => {
+      const rect = cell.getBoundingClientRect()
+      if (index === 0) colHits.push({ index: 0, x: rect.left, distance: Math.abs(x - rect.left) })
+      colHits.push({ index: index + 1, x: rect.right, distance: Math.abs(x - rect.right) })
+    })
+
+    // 行边界：表头底缘是第 0 条数据行，每条数据行的底缘是它之后的位置
+    const headRow = this.tableEl.querySelector('thead tr')
+    const rowHits: Array<{ index: number; y: number; distance: number }> = []
+    if (headRow) {
+      const rect = headRow.getBoundingClientRect()
+      rowHits.push({ index: 0, y: rect.bottom, distance: Math.abs(y - rect.bottom) })
+    }
+    this.tableEl.querySelectorAll('tbody tr').forEach((row, index) => {
+      const rect = row.getBoundingClientRect()
+      rowHits.push({ index: index + 1, y: rect.bottom, distance: Math.abs(y - rect.bottom) })
+    })
+
+    const limit = 7 * scale
+    const colHit = colHits.sort((a, b) => a.distance - b.distance)[0]
+    const rowHit = rowHits.sort((a, b) => a.distance - b.distance)[0]
+    const useCol = Boolean(colHit && colHit.distance <= limit && (!rowHit || colHit.distance <= rowHit.distance))
+    const useRow = Boolean(rowHit && rowHit.distance <= limit && !useCol)
+    if (!useCol && !useRow) {
+      this.hidePlus()
+      return
+    }
+
+    if (useCol && colHit) {
+      // 列：竖直间隙与表格上边缘的交叉点
+      this.hoverInsert = { kind: 'col', index: colHit.index }
+      this.plus.style.left = `${(colHit.x - blockRect.left) / scale - 8}px`
+      this.plus.style.top = `${(tableRect.top - blockRect.top) / scale - 8}px`
+      this.plus.title = '在此处插入列'
+    } else if (rowHit) {
+      // 行：表格左边缘与水平间隙的交叉点
+      this.hoverInsert = { kind: 'row', index: rowHit.index }
+      this.plus.style.left = `${(tableRect.left - blockRect.left) / scale - 8}px`
+      this.plus.style.top = `${(rowHit.y - blockRect.top) / scale - 8}px`
+      this.plus.title = '在此处插入行'
+    }
+    this.plus.hidden = false
+  }
+
+  private hidePlus(): void {
+    this.hoverInsert = null
+    if (this.plus) this.plus.hidden = true
+  }
+
+  /** 点击悬浮加号：按它当前的指向插入一行或一列。 */
+  private insertAtPointer(): void {
+    const target = this.hoverInsert
+    this.hidePlus()
+    if (!target) return
+    this.mutate(target.kind === 'col' ? 'insert-col' : 'insert-row', target.index)
+  }
+
+  /** 从阅读态切换到编辑态，并监听组件外的按下事件以便回写。 */
+  private beginEdit(view: EditorView): void {
+    if (this.editing || this.spec.locked) return
+    this.editing = true
+    this.renderTable()
+    window.requestAnimationFrame(() => this.focusCell(this.active.row, this.active.col))
+    const handler = (event: MouseEvent): void => {
+      const target = event.target as Node | null
+      // 加号挂在卡片外层，判定范围要用整个 block，否则点加号会被当成“点外面”先回写
+      if (target && this.block?.contains(target)) return
+      this.commit(view)
+    }
+    document.addEventListener('mousedown', handler, true)
+    this.detachOutside = () => document.removeEventListener('mousedown', handler, true)
+  }
+
+  private onFocusOut(view: EditorView, event: FocusEvent): void {
+    if (!this.editing || this.rebuilding) return
+    const next = event.relatedTarget as Node | null
+    if (next && this.wrap?.contains(next)) return
+    this.commit(view)
+  }
+
+  private onKeydown(view: EditorView, event: KeyboardEvent): void {
+    if (!this.editing) return
+    const target = event.target as HTMLElement | null
+    if (!target?.classList.contains('cell-input')) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      this.cancel()
+      return
+    }
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault()
+      this.commit(view)
+      return
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      this.moveCell(event.shiftKey ? -1 : 1, 0)
+      return
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      this.moveCell(0, event.shiftKey ? -1 : 1)
+    }
+  }
+
+  /** 按整张表的顺序移动焦点：Tab 横向循环，Enter 在同一列上下移动。 */
+  private moveCell(rowDelta: number, colDelta: number): void {
+    const columns = Math.max(1, this.header.length)
+    const total = (this.rows.length + 1) * columns
+    let index = (this.active.row + 1) * columns + this.active.col
+    index += colDelta ? colDelta : rowDelta * columns
+    index = Math.max(0, Math.min(total - 1, index))
+    this.focusCell(Math.floor(index / columns) - 1, index % columns)
+  }
+
+  private focusCell(row: number, col: number): void {
+    const input = this.wrap?.querySelector<HTMLInputElement>(`input[data-cell="${row}:${col}"]`)
+    if (!input) return
+    this.active = { row, col }
+    input.focus()
+    input.select()
+    this.syncBar()
+  }
+
+  /** 把输入框里的值收回内存模型，供增删行列后重建不失内容。 */
+  private capture(): void {
+    if (!this.wrap) return
+    for (const input of this.wrap.querySelectorAll<HTMLInputElement>('input[data-cell]')) {
+      const [rowText, colText] = (input.dataset.cell ?? '-1:0').split(':')
+      const row = Number(rowText)
+      const col = Number(colText)
+      if (row === -1) {
+        if (col < this.header.length) this.header[col] = input.value
+        continue
+      }
+      const cells = this.rows[row]
+      if (cells && col < cells.length) cells[col] = input.value
+    }
+  }
+
+  /** 在活动行下方插入一行；`at` 用于悬浮加号指定的精确插入位置。 */
+  private mutate(
+    action: 'insert-row' | 'insert-col' | 'delete-row' | 'delete-col',
+    at?: number
+  ): void {
+    if (!this.editing) return
+    this.capture()
+    const { row, col } = this.active
+    if (action === 'insert-row') {
+      const index = Math.max(0, Math.min(this.rows.length, at ?? row + 1))
+      this.rows.splice(index, 0, new Array(this.header.length).fill(''))
+      this.active = { row: index, col }
+    } else if (action === 'insert-col') {
+      const index = Math.max(0, Math.min(this.header.length, at ?? col + 1))
+      this.header.splice(index, 0, '')
+      for (const cells of this.rows) cells.splice(index, 0, '')
+      this.aligns.splice(index, 0, 'left')
+      this.active = { row, col: index }
+    } else if (action === 'delete-row') {
+      if (row < 0 || row >= this.rows.length) return
+      this.rows.splice(row, 1)
+      this.active = { row: Math.min(row, this.rows.length - 1), col }
+    } else {
+      if (this.header.length <= 1) return
+      this.header.splice(col, 1)
+      for (const cells of this.rows) cells.splice(col, 1)
+      this.aligns.splice(col, 1)
+      this.active = { row, col: Math.min(col, this.header.length - 1) }
+    }
+    // 重建 DOM 时焦点会短暂丢失，先标记避免触发回写，重建后立刻交还焦点
+    this.rebuilding = true
+    this.renderTable()
+    window.requestAnimationFrame(() => {
+      this.focusCell(this.active.row, this.active.col)
+      this.rebuilding = false
+    })
+  }
+
+  /** 回写表格；`toSource` 为真时把光标放到表格起点，方便继续改源码。 */
+  private commit(view: EditorView, toSource = false): void {
+    if (!this.editing) return
+    this.capture()
+    const markdown = serializeTable(this.header, this.rows, this.aligns)
+    this.editing = false
+    this.detachOutside?.()
+    this.detachOutside = null
+    const from = this.spec.sourcePos
+    const to = this.spec.sourceEnd
+    const unchanged = view.state.doc.sliceString(from, to) === markdown
+    if (unchanged) {
+      this.renderTable()
+      if (toSource) {
+        view.dispatch({ selection: EditorSelection.cursor(Math.min(from, view.state.doc.length)) })
+        view.focus()
+      }
+      return
+    }
+    view.dispatch({
+      changes: { from, to, insert: markdown },
+      ...(toSource ? { selection: EditorSelection.cursor(from) } : {})
+    })
+    if (toSource) view.focus()
+  }
+
+  /** 放弃本次编辑，恢复到进入编辑前的表格内容。 */
+  private cancel(): void {
+    if (!this.editing) return
+    this.editing = false
+    this.detachOutside?.()
+    this.detachOutside = null
+    this.header = [...this.base.header]
+    this.rows = this.base.rows.map((row) => [...row])
+    this.aligns = [...this.base.aligns]
+    this.renderTable()
   }
 }
 

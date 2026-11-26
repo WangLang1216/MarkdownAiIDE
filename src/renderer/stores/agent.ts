@@ -617,6 +617,8 @@ export const useAgentStore = defineStore('agent', () => {
       const current = editorApi.current
       if (!current || documents.activeId !== doc.snapshot.documentId) return
       if (doc.snapshot.revision !== result.contextKey.revision) return
+      // 组合输入中把幽灵文本插到光标旁会打断上屏，等下一次触发
+      if (current.isComposing()) return
       const snapshotSelection = current.getSelection()
       if (snapshotSelection.from !== selection.from || snapshotSelection.to !== selection.to) return
       current.showGhost(result.text)

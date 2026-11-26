@@ -475,6 +475,8 @@ watch(
     const snapshot = activeSnapshot.value
     if (!controllerRef || !snapshot) return
     if (currentLoadedId !== snapshot.documentId) return
+    // 输入法组合期间整体替换正文会打断上屏、让光标跳位，等组合结束再同步
+    if (controllerRef.isComposing()) return
     if (controllerRef.getText() !== snapshot.text) controllerRef.setText(snapshot.text)
   }
 )

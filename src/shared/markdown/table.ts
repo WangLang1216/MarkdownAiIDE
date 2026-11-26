@@ -78,3 +78,37 @@ export function countUncertainCells(table: TablePayload): number {
   return all.filter((cell) => cell.status === 'uncertain' || (!cell.text.trim() && cell.status !== 'empty'))
     .length
 }
+
+/* ------------------------------------------------------------------ */
+/* 可视表格编辑器                                                      */
+/* ------------------------------------------------------------------ */
+
+/** 表格列对齐方式，与 GFM 分隔行的三种写法一一对应。 */
+export type TableAlign = 'left' | 'center' | 'right'
+
+/** 对齐方式对应的分隔行单元格；左对齐用不带冒号的 `---`，与既有表格保持一致。 */
+export function tableAlignMarker(align: TableAlign): string {
+  if (align === 'center') return ':---:'
+  if (align === 'right') return '---:'
+  return '---'
+}
+
+/**
+ * 把可视表格编辑器里的表头、数据行写回 GFM 表格。
+ * 列数以表头为准：多余单元格截断、缺少补齐，保证写回后形状合法。
+ */
+export function serializeTable(header: string[], rows: string[][], aligns: TableAlign[] = []): string {
+  const columns = Math.max(1, header.length)
+  const normalize = (cells: string[]): string[] => {
+    const next = cells.slice(0, columns).map(escapeCell)
+    while (next.length < columns) next.push('')
+    return next
+  }
+  const head = normalize(header)
+  const divider = Array.from({ length: columns }, (_, index) => tableAlignMarker(aligns[index] ?? 'left'))
+  return [
+    `| ${head.join(' | ')} |`,
+    `| ${divider.join(' | ')} |`,
+    ...rows.map((row) => `| ${normalize(row).join(' | ')} |`)
+  ].join('\n')
+}

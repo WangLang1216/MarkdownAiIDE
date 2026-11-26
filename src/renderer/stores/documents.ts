@@ -25,6 +25,8 @@ export interface TabState {
   conflict: DiskConflictInfo | null
   /** 最近一次保存成功的时间戳。 */
   lastSavedAt: number | null
+  /** 最近一次真实编辑（输入、AI 写入或保存）的时间；仅用于「最近」列表排序。 */
+  lastEditedAt: number
   /** 供界面显示的结果或错误说明。 */
   message: string | null
 }
@@ -74,6 +76,8 @@ export const useDocumentsStore = defineStore('documents', () => {
       saveState: snapshot.dirty ? 'dirty' : 'saved',
       conflict: null,
       lastSavedAt: snapshot.existsOnDisk ? Date.now() : null,
+      // 打开文稿不算“编辑”，避免刚打开就顶到「最近」最前面
+      lastEditedAt: 0,
       message: null
     }
     tabs.value = [...tabs.value, tab]
@@ -81,9 +85,13 @@ export const useDocumentsStore = defineStore('documents', () => {
     return tab
   }
 
-  /** 合并主进程快照时保留本地更新的文本，除非快照来自外部/应用结果 */
+  /**
+   * 合并主进程快照时正文默认以本地为准。
+   * 同步/保存的响应可能比正在输入的内容慢一拍，直接覆盖会把刚敲的字退回去、光标跳位；
+   * 外部修改与重载由调用方显式接管正文（见 applySnapshot / resolveConflict）。
+   */
   function mergeSnapshot(current: DocumentSnapshot, next: DocumentSnapshot): DocumentSnapshot {
-    return { ...current, ...next }
+    return { ...current, ...next, text: current.text }
   }
 
   async function hydrate(): Promise<void> {
@@ -168,6 +176,7 @@ export const useDocumentsStore = defineStore('documents', () => {
     tab.snapshot.text = text
     tab.snapshot.dirty = true
     tab.saveState = 'dirty'
+    tab.lastEditedAt = Date.now()
     tab.message = null
     queueSync(tab.snapshot.documentId)
     scheduleAutosave(tab)
@@ -315,6 +324,7 @@ export const useDocumentsStore = defineStore('documents', () => {
       }
       tab.saveState = 'saved'
       tab.lastSavedAt = Date.now()
+      tab.lastEditedAt = Date.now()
       tab.message = result.message ?? null
       tab.conflict = null
       if (!silent) useUiStore().toast('已保存', 'success', 1600)
@@ -348,6 +358,8 @@ export const useDocumentsStore = defineStore('documents', () => {
       } else {
         const snapshot = result as DocumentSnapshot
         tab.snapshot = mergeSnapshot(tab.snapshot, snapshot)
+        // 重新载入：以磁盘正文为准
+        tab.snapshot.text = snapshot.text
         tab.saveState = 'saved'
         tab.conflict = null
         editorApi.current?.setText(snapshot.text)
@@ -362,6 +374,7 @@ export const useDocumentsStore = defineStore('documents', () => {
     const tab = tabs.value.find((item) => item.snapshot.documentId === documentId)
     if (!tab) return true
     if (tab.snapshot.dirty && !force) return false
+    const dirtyBeforeClose = tab.snapshot.dirty
     const state = stateOf(documentId)
     if (state.timer) window.clearTimeout(state.timer)
     if (state.autosave) window.clearTimeout(state.autosave)
@@ -374,6 +387,8 @@ export const useDocumentsStore = defineStore('documents', () => {
       const next = tabs.value[Math.min(index, tabs.value.length - 1)]
       activeId.value = next?.snapshot.documentId ?? null
     }
+    // 关闭未保存文稿会在主进程留下恢复草稿，立即刷新让「最近」马上能展示并管理它
+    if (dirtyBeforeClose) await refreshRecoveries().catch(() => undefined)
     return true
   }
 
@@ -385,6 +400,8 @@ export const useDocumentsStore = defineStore('documents', () => {
     const textChanged = tab.snapshot.text !== snapshot.text
     tab.snapshot = mergeSnapshot(tab.snapshot, snapshot)
     if (origin === 'external' || origin === 'reload') {
+      // 磁盘上的正文才是准的：显式覆盖本地缓冲
+      tab.snapshot.text = snapshot.text
       tab.saveState = snapshot.dirty ? 'dirty' : 'saved'
       if (textChanged && activeId.value === snapshot.documentId) editorApi.current?.setText(snapshot.text)
     } else if (origin === 'save') {
@@ -440,12 +457,16 @@ export const useDocumentsStore = defineStore('documents', () => {
     }
     tab.snapshot.dirty = true
     tab.saveState = 'dirty'
+    tab.lastEditedAt = Date.now()
     return tab.snapshot.text
   }
 
   async function restoreRecovery(documentId: string): Promise<void> {
     const snapshot = await window.api.documents.recoveryRestore(documentId)
     upsert(snapshot, true)
+    // 恢复草稿属于一次真实编辑，让它排在「最近」前列
+    const tab = tabs.value.find((item) => item.snapshot.documentId === documentId)
+    if (tab) tab.lastEditedAt = Date.now()
     recoveries.value = recoveries.value.filter((item) => item.documentId !== documentId)
     useUiStore().toast('已恢复未保存的草稿', 'success')
   }

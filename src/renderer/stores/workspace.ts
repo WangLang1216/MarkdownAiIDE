@@ -5,6 +5,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { FileNode, WorkspaceInfo, WorkspaceSearchHit, WorkspaceTree } from '@shared/types'
+import { buildRecentItems, type RecentItem } from '@shared/recent'
 import { useUiStore } from './ui'
 import { useDocumentsStore } from './documents'
 
@@ -25,6 +26,10 @@ export interface FlatNode {
 }
 
 const TEXT_EXT = new Set(['md', 'markdown', 'mdx', 'txt'])
+const FILE_SCOPE_KEY = 'moye.fileScope'
+
+/** 文件侧栏的两种视图：按最近编辑排列，或浏览完整目录树。 */
+export type FileScope = 'recent' | 'tree'
 
 /** 维护当前工作区和文件树、目录展开状态及搜索结果。 */
 export const useWorkspaceStore = defineStore('workspace', () => {
@@ -32,6 +37,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const tree = ref<WorkspaceTree | null>(null)
   const expanded = ref<Set<string>>(new Set(readExpanded()))
   const filter = ref('')
+  const fileScope = ref<FileScope>(readFileScope())
   const searchQuery = ref('')
   const searchResults = ref<WorkspaceSearchHit[]>([])
   const loading = ref(false)
@@ -86,6 +92,34 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     walk(rootNodes.value)
     return files
   })
+
+  /** 「最近」列表：工作区文稿按最近编辑排序，并合入关闭后未保存的草稿 */
+  const recentItems = computed<RecentItem[]>(() => {
+    const documents = useDocumentsStore()
+    const editedAtByPath = new Map<string, number>()
+    for (const tab of documents.tabs) {
+      const path = tab.snapshot.relativePath
+      if (!path || !tab.lastEditedAt) continue
+      editedAtByPath.set(path, Math.max(editedAtByPath.get(path) ?? 0, tab.lastEditedAt))
+    }
+    return buildRecentItems({
+      files: markdownFiles.value,
+      drafts: documents.recoveries,
+      editedAtByPath,
+      now: Date.now()
+    })
+  })
+
+  /** 切换文件侧栏视图并记住选择。 */
+  function setFileScope(scope: FileScope): void {
+    if (fileScope.value === scope) return
+    fileScope.value = scope
+    try {
+      window.localStorage.setItem(FILE_SCOPE_KEY, scope)
+    } catch {
+      // 隐私模式或磁盘配额受限时忽略，仅本次会话生效
+    }
+  }
 
   async function load(): Promise<void> {
     loading.value = true
@@ -244,12 +278,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     rootNodes,
     expanded,
     filter,
+    fileScope,
     searchQuery,
     searchResults,
     loading,
     error,
     visibleRows,
     markdownFiles,
+    recentItems,
     activeRelativePath,
     load,
     openDialog,
@@ -265,7 +301,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     remove,
     reveal,
     search,
-    clearSearch
+    clearSearch,
+    setFileScope
   }
 })
 
@@ -275,6 +312,15 @@ function readExpanded(): string[] {
     return raw ? (JSON.parse(raw) as string[]) : []
   } catch {
     return []
+  }
+}
+
+/** 读取上次停留的文件视图；默认回到完整目录树。 */
+function readFileScope(): FileScope {
+  try {
+    return localStorage.getItem(FILE_SCOPE_KEY) === 'recent' ? 'recent' : 'tree'
+  } catch {
+    return 'tree'
   }
 }
 

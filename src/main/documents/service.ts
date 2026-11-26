@@ -18,6 +18,7 @@ import type {
 } from '@shared/types'
 import { AppError } from '@shared/errors'
 import { collectDataImageRefs, rewriteImageRefs } from '@shared/markdown/images'
+import { isRecentDraft } from '@shared/recent'
 import {
   atomicWriteFile,
   isPathInside,
@@ -520,7 +521,17 @@ export class DocumentService {
       if (session.absPath) this.byPath.delete(this.pathKey(session.absPath))
       await this.clearRecovery(documentId)
     } else {
-      this.scheduleRecovery(session)
+      // 关闭时同步落盘草稿：侧栏「最近」需要立刻看到这份未保存文稿，
+      // 否则延迟写入会让列表和恢复提示短暂对不上。
+      const timer = this.recoveryTimers.get(documentId)
+      if (timer) clearTimeout(timer)
+      this.recoveryTimers.delete(documentId)
+      await this.writeRecovery(session).catch((error) => {
+        logger.warn('documents', '关闭时写入恢复草稿失败', {
+          documentId,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      })
     }
     this.emit(session, 'reload')
   }
@@ -711,6 +722,8 @@ export class DocumentService {
       try {
         const parsed = JSON.parse(raw) as RecoveryFile
         if (this.sessions.get(parsed.documentId)?.attached) continue
+        // 超过三天没有再编辑的草稿不再出现在「最近」与恢复提示中
+        if (!isRecentDraft(parsed.savedAt)) continue
         const info = await stat(join(dir, file)).catch(() => null)
         entries.push({
           documentId: parsed.documentId,

@@ -288,6 +288,7 @@ function widgetForBlock(
       lines.push(state.doc.line(number).text)
     const spec = parseTableLines(lines)
     spec.sourcePos = from
+    spec.sourceEnd = state.doc.line(block.toLine).to
     spec.locked = locked
     return new TableWidget(spec)
   }
@@ -365,6 +366,8 @@ function blockDecorationField(options: LivePreviewOptions) {
   return StateField.define<DecorationSet>({
     create: (state) => buildBlockDecorations(state, options),
     update(value, transaction) {
+      // 输入法组合期间不重建块级 Widget，避免 DOM 替换打断上屏
+      if (transaction.isUserEvent('input.type.compose')) return value
       const refresh = transaction.effects.some((effect) => effect.is(liveRefreshEffect))
       if (transaction.docChanged || transaction.selection !== undefined || refresh) {
         return buildBlockDecorations(transaction.state, options)
@@ -623,7 +626,8 @@ export function parseTableLines(lines: string[]): TableSpec {
     header: rows[0] ?? [],
     rows: rows.slice(2),
     aligns,
-    sourcePos: 0
+    sourcePos: 0,
+    sourceEnd: 0
   }
 }
 
@@ -825,12 +829,21 @@ export function livePreviewExtension(options: LivePreviewOptions) {
   const inlinePlugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
+      readonly view: EditorView
+      /** 组合结束补一次重建，把上屏文本的标记显示补齐 */
+      private readonly onCompositionEnd = (): void => {
+        this.view.dispatch({ effects: liveRefreshEffect.of(null) })
+      }
 
       constructor(view: EditorView) {
+        this.view = view
         this.decorations = buildInlineDecorations(view, options)
+        view.dom.addEventListener('compositionend', this.onCompositionEnd)
       }
 
       update(update: ViewUpdate): void {
+        // 输入法组合期间不重建装饰：替换光标周围的 DOM 会打断组合输入，让光标跳位
+        if (update.view.composing) return
         if (
           update.docChanged ||
           update.selectionSet ||
@@ -841,6 +854,10 @@ export function livePreviewExtension(options: LivePreviewOptions) {
         ) {
           this.decorations = buildInlineDecorations(update.view, options)
         }
+      }
+
+      destroy(): void {
+        this.view.dom.removeEventListener('compositionend', this.onCompositionEnd)
       }
     },
     { decorations: (plugin) => plugin.decorations }

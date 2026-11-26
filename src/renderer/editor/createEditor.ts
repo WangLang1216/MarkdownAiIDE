@@ -173,6 +173,9 @@ function deleteWholeLink(view: EditorView): boolean {
   return true
 }
 
+/** 块级元素：插入后光标要落到块后的第一行，停在块内会把后续输入写进标记里 */
+const BLOCK_SNIPPETS = new Set(['table', 'hr', 'toc'])
+
 /** 链接文字上的退格/删除优先清理整段链接，其余情况交回默认键盘映射。 */
 const linkDeleteKeymap = keymap.of([
   { key: 'Backspace', run: deleteWholeLink },
@@ -475,6 +478,24 @@ export class EditorController implements EditorFacade {
     }
   }
 
+  /**
+   * 插入块级元素后把光标放到块后的第一行。
+   * 光标停在块内会让整块保持源码形态（表格）或把后续输入写进标记（分隔线、目录）；
+   * 落到块外才能立刻看到渲染结果，继续输入也不会破坏语法。`beforeBlock` 是块前的字符数。
+   */
+  private insertBlockWithCaretAfter(
+    change: { from: number; to: number; insert: string },
+    beforeBlock: number,
+    markdown: string
+  ): void {
+    const nextDoc = this.view.state.update({ changes: change }).state.doc
+    const startLine = nextDoc.lineAt(change.from + beforeBlock).number
+    const endLine = Math.min(nextDoc.lines, startLine + markdown.split('\n').length - 1)
+    const anchor = nextDoc.line(Math.min(nextDoc.lines, endLine + 1)).from
+    this.view.dispatch({ changes: change, selection: { anchor }, scrollIntoView: true })
+    this.view.focus()
+  }
+
   /** 斜杠菜单选中元素：先删掉 `/关键字`，再按现有 snippet 流程插入 */
   private insertSnippetAt(id: string, range: { from: number; to: number }): void {
     if (this.locked) return
@@ -558,11 +579,20 @@ export class EditorController implements EditorFacade {
         : elementId === 'math' ? `$$\n${selected}\n$$`
           : elementId === 'deflist' ? `${selected}\n: 定义内容`
             : `${selected}\n\n${snippet.markdown}`
-      const { change } = this.buildInsertion(block)
+      const { change, bodyOffset } = this.buildInsertion(block)
+      if (BLOCK_SNIPPETS.has(elementId)) {
+        // 有选区时块是「选中文本 + 空行 + 元素」，元素前面还要多算这段前缀
+        this.insertBlockWithCaretAfter(change, bodyOffset + selected.length + 2, snippet.markdown)
+        return true
+      }
       this.replaceRange(change.from, change.to, change.insert)
       return true
     }
     const { change, bodyOffset } = this.buildInsertion(snippet.markdown)
+    if (BLOCK_SNIPPETS.has(elementId)) {
+      this.insertBlockWithCaretAfter(change, bodyOffset, snippet.markdown)
+      return true
+    }
     const selection = snippet.select
       ? {
           anchor: change.from + bodyOffset + snippet.select.from,

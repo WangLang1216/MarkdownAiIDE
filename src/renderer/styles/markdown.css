@@ -721,10 +721,106 @@
 }
 
 .cm-widget-table {
-  overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
   cursor: text;
+  overflow: hidden;
+  background: var(--page);
+}
+
+/* 表格本体单独横向滚动，编辑工具条始终留在可见区域 */
+.cm-widget-table .table-scroll {
+  overflow-x: auto;
+}
+
+/* 悬停时描边加深，提示表格可以点进去编辑 */
+.cm-widget-table:hover {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+}
+
+.cm-widget-table.editing {
+  cursor: default;
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.06);
+}
+
+/* 编辑工具条：增删行列、回源码与完成 */
+.table-editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 7px;
+  /* 与表格之间留出空隙，列插入加号才能骑在表格上边缘而不压住工具条 */
+  margin-bottom: 10px;
+  background: var(--side);
+  user-select: none;
+}
+
+.table-editor-bar[hidden],
+.table-insert[hidden] {
+  display: none;
+}
+
+/* 表格外层：盒子左右各外扩 10px，让骑在边缘上的加号可悬停、不被裁切 */
+.cm-widget-spaced-block.table-block {
+  position: relative;
+  padding-inline: 10px;
+  margin-inline: -10px;
+}
+
+.table-insert {
+  position: absolute;
+  z-index: 4;
+  width: 16px;
+  height: 16px;
+  padding: 0 0 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: var(--card);
+  color: var(--accent);
+  font: 600 13px/1 var(--ui-font);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.14);
+  cursor: pointer;
+}
+
+.table-insert:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--page);
+}
+
+.table-editor-bar button {
+  font-size: 10px;
+  color: var(--soft);
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.table-editor-bar button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.table-editor-bar button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.table-editor-bar .spacer {
+  flex: 1;
+}
+
+.table-editor-bar .source {
+  color: var(--muted);
+}
+
+.table-editor-bar .done {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .cm-widget-table table {
@@ -749,6 +845,39 @@
 
 .cm-widget-table tr:last-child td {
   border-bottom: 0;
+}
+
+/* 编辑态：单元格由输入框撑满，聚焦格用描边标出当前单元格 */
+.cm-widget-table.editing th,
+.cm-widget-table.editing td {
+  padding: 0;
+  border-left: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+}
+
+.cm-widget-table.editing th:first-child,
+.cm-widget-table.editing td:first-child {
+  border-left: 0;
+}
+
+.cm-widget-table.editing th:focus-within,
+.cm-widget-table.editing td:focus-within {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.cm-widget-table .cell-input {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+
+.cm-widget-table th .cell-input {
+  font-weight: 500;
 }
 
 .cm-widget-code {

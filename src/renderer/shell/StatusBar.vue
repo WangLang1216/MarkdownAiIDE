@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 状态栏：保存状态、字数、编码与换行、缩放、目录开关。
+ * 状态栏：保存状态、字数、编码与换行、缩放。
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { countText } from '@shared/markdown/outline'
@@ -68,13 +68,6 @@ async function save(): Promise<void> {
     <span>UTF-8 · {{ eolLabel }}</span>
     <button title="切换缩放" @click="ui.cycleZoom()">
       {{ ui.zoom }}%<Icon name="chevron-down" :size="10" />
-    </button>
-    <button
-      :title="ui.outlineVisible ? '隐藏目录' : '显示目录'"
-      :aria-label="ui.outlineVisible ? '隐藏目录' : '显示目录'"
-      @click="ui.toggleOutline()"
-    >
-      <Icon name="panel-right" :size="12" />
     </button>
   </footer>
 </template>

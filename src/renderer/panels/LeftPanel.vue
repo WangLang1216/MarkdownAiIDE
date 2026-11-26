@@ -16,6 +16,8 @@ import {
 } from '../editor/snippets'
 import { editorApi } from '../lib/editorApi'
 import { insertImageElement } from '../lib/actions'
+import { snippetGlyph, snippetIcon } from '../editor/elementBadges'
+import { formatRecentTime, type RecentItem } from '@shared/recent'
 import Icon from '../components/Icon.vue'
 
 const ui = useUiStore()
@@ -56,6 +58,10 @@ const elementQuery = ref('')
 const fileQuery = ref('')
 const elementSearch = ref<HTMLInputElement | null>(null)
 const newInput = ref<HTMLInputElement | null>(null)
+
+// 「最近」的“几分钟前”需要随时间走动，否则长时间停留时标签会停在旧值
+const nowTick = ref(Date.now())
+let nowTimer = 0
 
 type PromptMode = 'file' | 'folder' | 'rename'
 const prompt = ref<{ mode: PromptMode; parent: string; target?: string; value: string } | null>(null)
@@ -143,30 +149,6 @@ const filteredModules = computed(() =>
   )
 )
 
-const glyphs: Record<string, string> = {
-  h1: 'H1',
-  h2: 'H2',
-  h3: 'H3',
-  paragraph: '¶',
-  ordered: '1.',
-  tasks: '☑',
-  code: '{}',
-  table: '▦',
-  image: '▧',
-  link: '↗',
-  hr: '—'
-}
-
-const elementIcons: Record<string, string> = {
-  quote: 'quote',
-  list: 'list',
-  tasks: 'tasks',
-  code: 'code',
-  table: 'table',
-  image: 'image',
-  link: 'link'
-}
-
 function insert(id: string): void {
   if (!documents.activeId) {
     ui.toast('先打开一个文稿，再插入元素', 'warning')
@@ -249,10 +231,14 @@ function focusElementSearch(): void {
 onMounted(() => {
   window.addEventListener('focus-element-search', focusElementSearch)
   void workspace.load()
+  nowTimer = window.setInterval(() => {
+    nowTick.value = Date.now()
+  }, 60_000)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('focus-element-search', focusElementSearch)
+  window.clearInterval(nowTimer)
 })
 
 let searchTimer = 0
@@ -303,6 +289,56 @@ async function openSearchHit(relativePath: string, line: number): Promise<void> 
   editorApi.current?.revealOffset(offset)
 }
 
+/** 切换「最近 / 全部文件」视图；切换时收起尚未提交的新建输入。 */
+function switchScope(scope: 'recent' | 'tree'): void {
+  prompt.value = null
+  workspace.setFileScope(scope)
+  // 「最近」按磁盘修改时间排序，切回来时重新扫描一次，避免显示过期时间
+  if (scope === 'recent') void workspace.load()
+}
+
+async function openRecentItem(item: RecentItem): Promise<void> {
+  try {
+    if (item.kind === 'draft' && item.documentId) {
+      await documents.restoreRecovery(item.documentId)
+      return
+    }
+    if (item.relativePath) await workspace.openFile(item.relativePath)
+  } catch (error) {
+    ui.toast((error as Error).message || '打开文稿失败', 'error')
+  }
+}
+
+/** 「最近」副行的位置说明：未关联工作区的草稿单独标注，避免误以为在根目录。 */
+function recentLocation(item: RecentItem): string {
+  if (item.parent) return item.parent
+  return item.kind === 'draft' && !item.relativePath ? '本地草稿' : '根目录'
+}
+
+/** 删除「最近」中的记录：草稿只丢弃未保存内容，磁盘文稿仍走回收站流程。 */
+async function removeRecentItem(item: RecentItem): Promise<void> {
+  if (item.kind !== 'draft' || !item.documentId) {
+    if (item.relativePath) await removeFile(item.relativePath)
+    return
+  }
+  const documentId = item.documentId
+  const confirmed = await ui.askConfirm({
+    title: '删除未保存草稿',
+    message: item.relativePath
+      ? `将丢弃《${item.title}》尚未保存的修改，磁盘上的原文件不受影响，之后也不会再提示恢复。确定继续？`
+      : `将丢弃《${item.title}》的全部内容，之后也不会再提示恢复。确定继续？`,
+    confirmText: '删除',
+    danger: true
+  })
+  if (!confirmed) return
+  try {
+    await documents.discardRecovery(documentId)
+    ui.toast('已删除未保存草稿', 'success')
+  } catch (error) {
+    ui.toast((error as Error).message || '删除草稿失败', 'error')
+  }
+}
+
 function beginCreate(mode: 'file' | 'folder'): void {
   prompt.value = { mode, parent: '', value: '' }
   void nextTick(() => newInput.value?.focus())
@@ -347,7 +383,11 @@ async function removeFile(relativePath: string): Promise<void> {
   if (!confirmed) return
   try {
     const openTab = documents.tabs.find((tab) => tab.snapshot.relativePath === relativePath)
-    if (openTab) await documents.close(openTab.snapshot.documentId, true)
+    if (openTab) {
+      await documents.close(openTab.snapshot.documentId, true)
+      // 文稿已被删除，关闭时留下的未保存草稿也一并丢弃，避免下次提示恢复一个不存在的文件
+      await documents.discardRecovery(openTab.snapshot.documentId)
+    }
     await workspace.remove(relativePath)
   } catch (error) {
     ui.toast((error as Error).message, 'error')
@@ -421,8 +461,8 @@ async function switchWorkspace(): Promise<void> {
             :title="`点击或拖动插入${item.label}`"
             @click="insert(item.id)"
           >
-            <span v-if="glyphs[item.id]" class="glyph">{{ glyphs[item.id] }}</span>
-            <Icon v-else :name="elementIcons[item.id] ?? 'file'" :size="15" />
+            <span v-if="snippetGlyph(item)" class="glyph">{{ snippetGlyph(item) }}</span>
+            <Icon v-else :name="snippetIcon(item)" :size="15" />
             <span class="label">{{ item.label }}</span>
           </button>
           <span
@@ -466,8 +506,8 @@ async function switchWorkspace(): Promise<void> {
             @dragstart="startDrag($event, item.id)"
             @dragend="endReorder"
           >
-            <span v-if="item.glyph" class="glyph">{{ item.glyph }}</span>
-            <Icon v-else :name="item.id === 'mermaid' ? 'workflow' : 'file'" :size="15" />
+            <span v-if="snippetGlyph(item)" class="glyph">{{ snippetGlyph(item) }}</span>
+            <Icon v-else :name="snippetIcon(item)" :size="15" />
             <span class="label">{{ item.label }}</span>
           </button>
           <span
@@ -585,7 +625,55 @@ async function switchWorkspace(): Promise<void> {
       </div>
 
       <template v-else>
-        <div class="tree" v-if="!workspace.searchQuery">
+        <div class="scope-switch" role="tablist" aria-label="文件视图">
+          <button
+            role="tab"
+            :aria-selected="workspace.fileScope === 'recent'"
+            :class="{ selected: workspace.fileScope === 'recent' }"
+            @click="switchScope('recent')"
+          >
+            <Icon name="history" :size="12" />最近
+          </button>
+          <button
+            role="tab"
+            :aria-selected="workspace.fileScope === 'tree'"
+            :class="{ selected: workspace.fileScope === 'tree' }"
+            @click="switchScope('tree')"
+          >
+            <Icon name="folder" :size="12" />全部文件
+          </button>
+        </div>
+
+        <div v-if="!workspace.searchQuery && workspace.fileScope === 'recent'" class="recent-list">
+          <div class="side-heading">
+            最近编辑<span>{{ workspace.recentItems.length }} 篇</span>
+          </div>
+          <div
+            v-for="item in workspace.recentItems"
+            :key="item.key"
+            class="recent-row"
+            :class="{
+              active: item.relativePath && documents.activeTab?.snapshot.relativePath === item.relativePath
+            }"
+            :title="item.relativePath ?? item.title"
+            @click="openRecentItem(item)"
+          >
+            <Icon :name="item.kind === 'draft' ? 'history' : 'file'" :size="12" />
+            <span class="recent-main">
+              <span class="label">{{ item.title }}</span>
+              <small>{{ recentLocation(item) }} · {{ formatRecentTime(item.editedAt, nowTick) }}</small>
+            </span>
+            <span v-if="item.unsaved" class="recent-badge">未保存</span>
+            <span class="row-actions" @click.stop>
+              <button title="删除" aria-label="删除" @click="removeRecentItem(item)">
+                <Icon name="trash" :size="12" />
+              </button>
+            </span>
+          </div>
+          <p v-if="!workspace.recentItems.length" class="tree-empty">还没有最近编辑的文稿</p>
+        </div>
+
+        <div class="tree" v-else-if="!workspace.searchQuery">
           <div class="tree-actions">
             <button class="textbtn" @click="beginCreate('file')">+ 新建文稿</button>
             <button class="textbtn" @click="beginCreate('folder')">+ 新建目录</button>

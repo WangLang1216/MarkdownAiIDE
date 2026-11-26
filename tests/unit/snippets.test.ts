@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { snippetById } from '../../src/renderer/editor/snippets'
+import { ELEMENT_SNIPPETS, EXTENDED_SNIPPETS, snippetById } from '../../src/renderer/editor/snippets'
+import { snippetToolbarBadge } from '../../src/renderer/editor/elementBadges'
 import { ICON_PATHS } from '../../src/renderer/lib/icons'
 
 /** 元素片段插入后需要选中的占位内容，避免用户再去找要改的位置。 */
@@ -20,6 +21,17 @@ describe('元素片段默认选区', () => {
       const snippet = snippetById(id)!
       expect(snippet.select).toBeDefined()
       expect(snippet.markdown.slice(snippet.select!.from, snippet.select!.to)).toBe(text)
+    }
+  })
+})
+
+/** 顶栏元素条只有图标没有文字，每个元素都必须能给出记号或已注册的图标。 */
+describe('顶栏元素记号', () => {
+  it('基础与扩展元素都有可见记号，图标均已注册', () => {
+    for (const snippet of [...ELEMENT_SNIPPETS, ...EXTENDED_SNIPPETS]) {
+      const badge = snippetToolbarBadge(snippet)
+      expect(Boolean(badge.glyph || badge.icon), snippet.id).toBe(true)
+      if (badge.icon) expect(ICON_PATHS[badge.icon], snippet.id).toBeTruthy()
     }
   })
 })

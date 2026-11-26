@@ -4,10 +4,11 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDocumentsStore } from '../stores/documents'
-import { useWorkspaceStore } from '../stores/workspace'
 import { useUiStore } from '../stores/ui'
 import { closeTabWithConfirm, insertImageElement, togglePageLock } from '../lib/actions'
 import { editorApi } from '../lib/editorApi'
+import { ELEMENT_SNIPPETS, EXTENDED_SNIPPETS, type SnippetDefinition } from '../editor/snippets'
+import { snippetToolbarBadge } from '../editor/elementBadges'
 import DocumentArea from '../editor/DocumentArea.vue'
 import AiDock from '../ai/AiDock.vue'
 import StatusBar from './StatusBar.vue'
@@ -15,8 +16,26 @@ import Icon from '../components/Icon.vue'
 import type { ContentWidth, EditorMode } from '../types'
 
 const documents = useDocumentsStore()
-const workspace = useWorkspaceStore()
 const ui = useUiStore()
+
+interface ToolbarItem {
+  id: string
+  label: string
+  glyph?: string
+  icon?: string
+}
+
+/** 顶栏元素条：基础元素与扩展语法元素全部平铺，顺序与左侧面板一致。 */
+function toToolbarItems(list: SnippetDefinition[]): ToolbarItem[] {
+  return list.map((snippet) => ({
+    id: snippet.id,
+    label: snippet.label,
+    ...snippetToolbarBadge(snippet)
+  }))
+}
+
+const basicElements = toToolbarItems(ELEMENT_SNIPPETS)
+const extendedElements = toToolbarItems(EXTENDED_SNIPPETS)
 
 const modes: Array<{ value: EditorMode; label: string; icon: string }> = [
   { value: 'live', label: '即时渲染', icon: 'pen' },
@@ -257,15 +276,6 @@ onBeforeUnmount(() => {
   tabsObserver = null
 })
 
-const breadcrumb = computed(() => {
-  const tab = documents.activeTab
-  if (!tab) return { root: workspace.info?.name ?? '本地文稿', path: '' }
-  const relative = tab.snapshot.relativePath
-  const parts = relative ? relative.split('/') : []
-  parts.pop()
-  return { root: workspace.info?.name ?? '本地文稿', path: parts.join(' / ') }
-})
-
 const saveText = computed(() => {
   const tab = documents.activeTab
   if (!tab) return ''
@@ -279,8 +289,24 @@ function format(kind: 'bold' | 'italic' | 'code'): void {
   editorApi.current?.wrapSelection(kind)
 }
 
-function insert(id: string): void {
+/** 顶栏元素条：图片需要走文件选择与资源落盘，其余元素直接插入片段。 */
+function insertElement(id: string): void {
+  if (ui.locked) return
+  if (id === 'image') {
+    void insertImageElement()
+    return
+  }
   editorApi.current?.insertSnippet(id)
+  // 点击会把焦点留在按钮上，下一帧交还编辑器，插入后的占位文字才处于可编辑选中态
+  window.requestAnimationFrame(() => editorApi.current?.focus())
+}
+
+function undo(): void {
+  editorApi.current?.undo()
+}
+
+function redo(): void {
+  editorApi.current?.redo()
 }
 
 async function resolve(choice: 'reload' | 'overwrite' | 'saveAs'): Promise<void> {
@@ -417,15 +443,22 @@ async function resolve(choice: 'reload' | 'overwrite' | 'saveAs'): Promise<void>
           <Icon name="expand" :size="15" />
           <span v-if="ui.focusMode">退出专注</span>
         </button>
+
+        <button
+          class="iconbtn outline-toggle"
+          :class="{ active: ui.outlineVisible }"
+          :title="ui.outlineVisible ? '隐藏目录' : '显示目录'"
+          :aria-label="ui.outlineVisible ? '隐藏目录' : '显示目录'"
+          :aria-pressed="ui.outlineVisible"
+          @click="ui.toggleOutline()"
+        >
+          <Icon name="panel-right" :size="15" />
+        </button>
       </template>
     </div>
 
     <div v-if="documents.activeTab" class="formatbar">
-      <div class="breadcrumb">
-        {{ breadcrumb.root }}
-        <template v-if="breadcrumb.path"><span>/</span>{{ breadcrumb.path }}</template>
-      </div>
-      <div class="format-actions">
+      <div class="format-actions" role="toolbar" aria-label="格式与元素">
         <button title="加粗 (Ctrl B)" aria-label="加粗" :disabled="ui.locked" @click="format('bold')">
           <b>B</b>
         </button>
@@ -436,23 +469,35 @@ async function resolve(choice: 'reload' | 'overwrite' | 'saveAs'): Promise<void>
           `
         </button>
         <span class="sep" />
-        <button title="插入链接" aria-label="插入链接" :disabled="ui.locked" @click="insert('link')">
-          <Icon name="link" :size="15" />
-        </button>
-        <button title="插入图片" aria-label="插入图片" :disabled="ui.locked" @click="insertImageElement">
-          <Icon name="image" :size="15" />
-        </button>
-        <button title="插入表格" aria-label="插入表格" :disabled="ui.locked" @click="insert('table')">
-          <Icon name="table" :size="15" />
+        <button
+          v-for="item in basicElements"
+          :key="item.id"
+          :title="`插入${item.label}`"
+          :aria-label="`插入${item.label}`"
+          :disabled="ui.locked"
+          @click="insertElement(item.id)"
+        >
+          <Icon v-if="item.icon" :name="item.icon" :size="14" />
+          <span v-else class="glyph">{{ item.glyph }}</span>
         </button>
         <span class="sep" />
         <button
-          title="撤销 (Ctrl Z)"
-          aria-label="撤销"
+          v-for="item in extendedElements"
+          :key="item.id"
+          :title="`插入${item.label}`"
+          :aria-label="`插入${item.label}`"
           :disabled="ui.locked"
-          @click="editorApi.current?.undo()"
+          @click="insertElement(item.id)"
         >
+          <Icon v-if="item.icon" :name="item.icon" :size="14" />
+          <span v-else class="glyph">{{ item.glyph }}</span>
+        </button>
+        <span class="sep" />
+        <button title="撤销 (Ctrl Z)" aria-label="撤销" :disabled="ui.locked" @click="undo">
           <Icon name="undo" :size="15" />
+        </button>
+        <button title="重做 (Ctrl Shift Z)" aria-label="重做" :disabled="ui.locked" @click="redo">
+          <Icon name="redo" :size="15" />
         </button>
       </div>
       <button
@@ -498,6 +543,12 @@ async function resolve(choice: 'reload' | 'overwrite' | 'saveAs'): Promise<void>
   border-radius: 999px;
   background: var(--card);
   color: var(--text);
+}
+
+/* 目录开关：打开时常亮，和状态栏原来的入口保持一致的动作 */
+.outline-toggle.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .save-area {

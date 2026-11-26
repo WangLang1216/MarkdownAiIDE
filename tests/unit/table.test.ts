@@ -4,7 +4,9 @@ import {
   countUncertainCells,
   escapeCell,
   normalizeTableCells,
-  renderTable
+  renderTable,
+  serializeTable,
+  tableAlignMarker
 } from '@shared/markdown/table'
 
 const baseTable = {
@@ -73,5 +75,48 @@ describe('GFM 表格生成与校验', () => {
     const cells = normalizeTableCells([{ text: '唯一', status: 'recognized' }], 3)
     expect(cells).toHaveLength(3)
     expect(cells[1].status).toBe('empty')
+  })
+})
+
+/** 可视表格编辑器把单元格写回 GFM，形状和转义必须和源码手写一致。 */
+describe('可视表格回写', () => {
+  it('按对齐方式生成分隔行', () => {
+    expect(tableAlignMarker('left')).toBe('---')
+    expect(tableAlignMarker('center')).toBe(':---:')
+    expect(tableAlignMarker('right')).toBe('---:')
+  })
+
+  it('重建标准表格并保留对齐', () => {
+    const md = serializeTable(
+      ['项目', '说明'],
+      [
+        ['A', 'a'],
+        ['B', 'b']
+      ],
+      ['left', 'center']
+    )
+    expect(md.split('\n')).toEqual(['| 项目 | 说明 |', '| --- | :---: |', '| A | a |', '| B | b |'])
+  })
+
+  it('竖线与换行按单元格规则转义', () => {
+    const md = serializeTable(['列'], [['a | b'], ['第一行\n第二行']], ['left'])
+    expect(md).toContain('| a \\| b |')
+    expect(md).toContain('| 第一行<br>第二行 |')
+  })
+
+  it('列数以表头为准，缺列补齐、多列截断', () => {
+    const md = serializeTable(['A', 'B', 'C'], [['1'], ['1', '2', '3', '4']], [])
+    expect(md.split('\n')[2]).toBe('| 1 |  |  |')
+    expect(md.split('\n')[3]).toBe('| 1 | 2 | 3 |')
+  })
+
+  it('只剩表头时也输出合法表格', () => {
+    const md = serializeTable(['唯一列'], [], ['right'])
+    expect(md).toBe('| 唯一列 |\n| ---: |')
+  })
+
+  it('空表头按一列处理，避免写出无法解析的空表', () => {
+    const md = serializeTable([], [['内容']], [])
+    expect(md).toBe('|  |\n| --- |\n| 内容 |')
   })
 })

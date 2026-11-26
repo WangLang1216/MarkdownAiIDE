@@ -192,6 +192,92 @@ export async function runVisualHarness(window: BrowserWindow): Promise<void> {
       await delay(1200)
     }
 
+    // 真实鼠标点击：走 Chromium 输入管线（不是 dispatchEvent），用于验证 CodeMirror
+    // 是否会抢走 widget 内的点击。值为 CSS 选择器，点在元素中心。
+    if (process.env.MDIDE_UI_REAL_CLICK) {
+      const point = (await window.webContents.executeJavaScript(`
+        (() => {
+          const el = document.querySelector(${JSON.stringify(process.env.MDIDE_UI_REAL_CLICK)});
+          if (!el) return null;
+          const rect = el.getBoundingClientRect();
+          return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+        })()
+      `)) as { x: number; y: number } | null
+      if (point) {
+        window.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
+        window.webContents.sendInputEvent({
+          type: 'mouseDown',
+          x: point.x,
+          y: point.y,
+          button: 'left',
+          clickCount: 1
+        })
+        window.webContents.sendInputEvent({
+          type: 'mouseUp',
+          x: point.x,
+          y: point.y,
+          button: 'left',
+          clickCount: 1
+        })
+        await delay(700)
+        const probe = await window.webContents.executeJavaScript(`
+          (() => ({
+            widget: Boolean(document.querySelector('.cm-widget-table')),
+            editing: Boolean(document.querySelector('.cm-widget-table.editing')),
+            source: (document.querySelector('.cm-content')?.innerText || '').includes('| --- |')
+          }))()
+        `)
+        logger.info('harness', '真实点击后状态', { point, probe })
+      } else {
+        logger.warn('harness', '真实点击目标不存在', { target: process.env.MDIDE_UI_REAL_CLICK })
+      }
+    }
+
+    // 模拟输入法组合输入（CDP Input.imeSetComposition），用于复现中文标点导致的光标跳动
+    if (process.env.MDIDE_UI_IME) {
+      const segments = process.env.MDIDE_UI_IME.split('|')
+      const dbg = window.webContents.debugger
+      try {
+        dbg.attach('1.3')
+      } catch {
+        // 已附加时忽略
+      }
+      const probe = async (label: string): Promise<void> => {
+        const state = await window.webContents.executeJavaScript(`
+          (() => {
+            const selection = window.getSelection();
+            const content = document.querySelector('.cm-content');
+            const active = document.activeElement;
+            return {
+              text: (content?.innerText || '').slice(0, 80),
+              caret: selection?.anchorOffset ?? null,
+              node: selection?.anchorNode?.textContent?.slice(0, 40) ?? null,
+              activeTag: active?.tagName ?? null,
+              activeValue: (active && 'value' in active ? String(active.value) : '').slice(0, 40),
+              activeCaret: (active && 'selectionStart' in active ? active.selectionStart : null)
+            };
+          })()
+        `)
+        logger.info('harness', `IME ${label}`, { state })
+      }
+      await probe('开始前')
+      // 支持用 | 分隔多段组合，逐段模拟输入法上屏
+      for (const text of segments) {
+        if (!text) continue
+        await dbg.sendCommand('Input.imeSetComposition', {
+          text,
+          selectionStart: text.length,
+          selectionEnd: text.length
+        })
+        await delay(280)
+        await probe(`组合 ${text}`)
+        await dbg.sendCommand('Input.insertText', { text })
+        await delay(280)
+        await probe(`提交 ${text}`)
+      }
+      dbg.detach()
+    }
+
     // 复制当前选区（等价于 Ctrl+C），用于验证锁定态的“选中即可复制”
     if (process.env.MDIDE_UI_COPY_SELECTION === '1') {
       window.webContents.copy()

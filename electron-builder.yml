@@ -52,6 +52,8 @@ linux:
     - AppImage
 
 fileAssociations:
+  # 只接管 Markdown。不要再登记 txt：安装器会把「纯文本」的默认打开方式与图标
+  # 一并改成小彭友，用户的记事本文件和桌面图标都会被顶掉。
   - ext: md
     name: Markdown 文档
     description: Markdown 文档
@@ -59,8 +61,4 @@ fileAssociations:
   - ext: markdown
     name: Markdown 文档
     description: Markdown 文档
-    role: Editor
-  - ext: txt
-    name: 纯文本
-    description: 纯文本文档
     role: Editor
