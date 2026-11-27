@@ -80,6 +80,30 @@ export function configureCacheDir(dir: string): boolean {
   }
 }
 
+/** 示例文件区的默认位置：应用数据目录下的「示例工作区」 */
+export function defaultDemoWorkspace(): string {
+  return join(appPaths().userData, '示例工作区')
+}
+
+/** 把设置里的示例文件区路径解析为绝对路径；留空时回到默认位置 */
+export function resolveDemoWorkspacePath(dir: string): string {
+  const value = dir.trim()
+  return value || defaultDemoWorkspace()
+}
+
+/** 切换示例文件区位置（用户在设置中指定）；空值表示回到默认目录 */
+export function configureDemoWorkspace(dir: string): boolean {
+  const paths = appPaths()
+  const value = resolveDemoWorkspacePath(dir)
+  try {
+    if (!existsSync(value)) mkdirSync(value, { recursive: true })
+    paths.demoWorkspace = value
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** 首次启动时创建目录结构，失败即终止，避免后续写入随机位置 */
 export function ensureAppDirectories(): void {
   const paths = appPaths()

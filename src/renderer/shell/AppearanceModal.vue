@@ -109,6 +109,27 @@ async function chooseCacheDir(): Promise<void> {
   await patchStorage({ cacheDir: selected })
   ui.toast('缓存目录已更新，新导出的临时文件会写入该目录', 'success', 3600)
 }
+
+/** 新的示例文件区位置：主进程会把旧目录里的文稿迁移过去，并广播提示 */
+async function chooseDemoWorkspaceDir(): Promise<void> {
+  const selected = await window.api.app.chooseDirectory('选择示例文件区目录')
+  if (!selected) return
+  try {
+    await patchStorage({ demoWorkspaceDir: selected })
+    await settings.refreshAppInfo()
+  } catch (error) {
+    ui.toast((error as Error).message || '示例文件区迁移失败', 'error')
+  }
+}
+
+async function resetDemoWorkspaceDir(): Promise<void> {
+  try {
+    await patchStorage({ demoWorkspaceDir: '' })
+    await settings.refreshAppInfo()
+  } catch (error) {
+    ui.toast((error as Error).message || '示例文件区迁移失败', 'error')
+  }
+}
 </script>
 
 <template>
@@ -361,6 +382,22 @@ async function chooseCacheDir(): Promise<void> {
           </div>
           <small class="field-hint">导出临时文件与 PDF 打印缓存</small>
         </div>
+        <div class="field field-wide">
+          <label>示例文件区位置</label>
+          <div class="field-inline">
+            <input
+              :value="storageSettings.demoWorkspaceDir || settings.appInfo?.demoWorkspacePath || ''"
+              placeholder="默认：应用数据目录/示例工作区"
+              spellcheck="false"
+              readonly
+            />
+            <button class="ghostbtn" @click="chooseDemoWorkspaceDir">选择…</button>
+            <button v-if="storageSettings.demoWorkspaceDir" class="textbtn" @click="resetDemoWorkspaceDir">
+              恢复默认
+            </button>
+          </div>
+          <small class="field-hint">示例文稿所在目录；修改后会自动把旧目录中的文件迁移到新位置</small>
+        </div>
       </div>
 
       <div class="settings-label">导出<span>PDF 使用 Chromium 打印，其他格式需要 Pandoc</span></div>
@@ -435,6 +472,11 @@ async function chooseCacheDir(): Promise<void> {
 .field-inline input {
   flex: 1;
   min-width: 0;
+}
+
+/* 需要独占一行宽度的设置项（如路径选择） */
+.field-wide {
+  grid-column: 1 / -1;
 }
 
 .field-hint {

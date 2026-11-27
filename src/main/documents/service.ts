@@ -625,6 +625,27 @@ export class DocumentService {
     }
   }
 
+  /**
+   * 工作区根目录整体迁移（如修改示例文件区位置）后，
+   * 把打开中的会话重新指向新根目录下的同一相对路径，避免保存时写回旧目录。
+   * 迁移后的目录不是当前工作区时，会话退回为独立的本地文稿。
+   */
+  async relocateWorkspaceRoot(fromRoot: string, toRoot: string): Promise<void> {
+    const current = this.workspace.getCurrent()
+    const insideCurrent = Boolean(current && isPathInside(current.rootPath, toRoot))
+    for (const session of this.sessions.values()) {
+      const abs = session.absPath
+      if (!abs || !isPathInside(fromRoot, abs)) continue
+      const rel = toPosix(relative(fromRoot, abs))
+      const next = resolve(toRoot, rel)
+      this.byPath.delete(this.pathKey(abs))
+      if (insideCurrent && current) session.relocate(next, rel, current.workspaceId)
+      else session.relocate(next, null, null)
+      this.byPath.set(this.pathKey(next), session.documentId)
+      this.emit(session, 'external')
+    }
+  }
+
   /* ---------------------------- 恢复草稿 ---------------------------- */
 
   private scheduleRecovery(session: DocumentSession): void {

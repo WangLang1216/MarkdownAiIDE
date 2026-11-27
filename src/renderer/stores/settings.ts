@@ -22,7 +22,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   agent: { approvalMode: 'ask', maxRounds: 12, temperature: 0.3 },
   prediction: { enabled: true, auto: true, debounceMs: 800, maxPerMinute: 6, maxTokens: 120 },
   export: { includeTheme: true, includeSources: true, pageSize: 'A4', marginMm: 18 },
-  storage: { assetsFolder: 'assets', cacheDir: '' },
+  storage: { assetsFolder: 'assets', cacheDir: '', demoWorkspaceDir: '' },
   appBehavior: { closeAction: 'ask', restoreSession: true, autoUpdate: true },
   openFiles: [],
   recentFiles: [],

@@ -254,8 +254,32 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     useUiStore().toast('已移入回收站或应用恢复区', 'success')
   }
 
+  /** 拖入目标目录：移动完成后刷新文件树，并同步已打开文稿的相对路径 */
+  async function move(relativePath: string, targetDir: string): Promise<void> {
+    const result = await window.api.workspace.move(relativePath, targetDir)
+    const nextPath = result.relativePath ?? relativePath
+    await load()
+    if (nextPath === relativePath) return
+    const documents = useDocumentsStore()
+    for (const tab of documents.tabs) {
+      const current = tab.snapshot.relativePath
+      if (!current) continue
+      if (current !== relativePath && !current.startsWith(`${relativePath}/`)) continue
+      documents.updateTabMeta(tab.snapshot.documentId, {
+        relativePath: `${nextPath}${current.slice(relativePath.length)}`
+      })
+    }
+    expandTo(nextPath)
+    useUiStore().toast(`已移动到 ${targetDir || '根目录'}`, 'success')
+  }
+
   async function reveal(relativePath: string): Promise<void> {
     await window.api.workspace.reveal(relativePath)
+  }
+
+  /** 用系统文件管理器打开目录；空串表示工作区根目录 */
+  async function openFolder(relativePath: string): Promise<void> {
+    await window.api.workspace.openFolder(relativePath)
   }
 
   async function search(query: string): Promise<void> {
@@ -298,8 +322,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     createFile,
     createFolder,
     rename,
+    move,
     remove,
     reveal,
+    openFolder,
     search,
     clearSearch,
     setFileScope

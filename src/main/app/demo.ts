@@ -2,8 +2,10 @@
  * 首次启动的示例工作区。只在用户没有最近工作区时创建，不覆盖已有文件。
  */
 
-import { mkdir, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { cp, mkdir, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, extname, join } from 'node:path'
+import { AppError } from '@shared/errors'
+import { isPathInside, pathExists } from '../utils/fs'
 import { logger } from '../utils/logger'
 
 const SAMPLE = `# 让想法，自然成文
@@ -103,4 +105,61 @@ export async function ensureDemoWorkspace(root: string): Promise<string> {
 /** 计算演示工作区默认打开的文稿路径。 */
 export function demoDefaultDocument(root: string): string {
   return join(root, '产品设计', '让想法，自然成文.md')
+}
+
+/** 目标已存在时追加序号，避免迁移覆盖用户已有的同名文件 */
+async function uniqueTarget(target: string): Promise<string> {
+  if (!(await pathExists(target))) return target
+  const dir = dirname(target)
+  const ext = extname(target)
+  const base = basename(target, ext)
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = join(dir, `${base} (${index})${ext}`)
+    if (!(await pathExists(candidate))) return candidate
+  }
+  throw new AppError('FILE_EXISTS', '目标目录中存在过多同名文件，无法迁移。')
+}
+
+/** 逐项移动目录内容；跨磁盘时退化为复制后删除 */
+async function moveEntries(from: string, to: string): Promise<number> {
+  await mkdir(to, { recursive: true })
+  // 读不到目录时让错误冒出来：静默跳过会让设置指向一个空目录，原文件却留在旧位置
+  const entries = await readdir(from, { withFileTypes: true })
+  let moved = 0
+  for (const entry of entries) {
+    const source = join(from, entry.name)
+    const target = await uniqueTarget(join(to, entry.name))
+    try {
+      await rename(source, target)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error
+      await cp(source, target, { recursive: true, errorOnExist: true, force: false })
+      await rm(source, { recursive: true, force: true })
+    }
+    moved += 1
+  }
+  return moved
+}
+
+/**
+ * 迁移示例文件区：把旧目录里的文稿搬到新目录。
+ * 目标目录已有同名文件时保留两份（新文件追加序号），并尽量清理空的旧目录。
+ */
+export async function migrateDemoWorkspace(from: string, to: string): Promise<number> {
+  if (from === to) return 0
+  if (isPathInside(from, to) || isPathInside(to, from)) {
+    throw new AppError('INVALID_INPUT', '新的示例文件区不能是原目录的上级或子目录。')
+  }
+  const exists = await stat(from)
+    .then((info) => info.isDirectory())
+    .catch(() => false)
+  if (!exists) {
+    await mkdir(to, { recursive: true })
+    return 0
+  }
+  const moved = await moveEntries(from, to)
+  // 旧目录只在搬空后删除，避免误删用户后来放进去的东西
+  await rmdir(from).catch(() => undefined)
+  logger.info('demo', '示例文件区已迁移', { from, to, moved })
+  return moved
 }

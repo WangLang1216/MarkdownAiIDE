@@ -88,9 +88,11 @@ const api: DesktopAPI = {
     imagePreview: (relativePath) => invoke(IPC.workspace.imagePreview, relativePath),
     createFolder: (relativePath) => invoke(IPC.workspace.createFolder, relativePath),
     rename: (from, to) => invoke(IPC.workspace.rename, from, to),
+    move: (from, toDir) => invoke(IPC.workspace.move, from, toDir),
     remove: (relativePath) => invoke(IPC.workspace.remove, relativePath),
     search: (query, limit) => invoke(IPC.workspace.search, query, limit),
     reveal: (relativePath) => invoke(IPC.workspace.reveal, relativePath),
+    openFolder: (relativePath) => invoke(IPC.workspace.openFolder, relativePath),
     recent: () => invoke(IPC.workspace.recent)
   },
   settings: {

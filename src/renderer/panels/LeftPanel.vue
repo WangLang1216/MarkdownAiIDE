@@ -401,6 +401,76 @@ async function switchWorkspace(): Promise<void> {
     ui.toast((error as Error).message, 'error')
   }
 }
+
+/* --------------------------- 拖放移动文件 --------------------------- */
+
+/** 正在拖动的条目相对路径；null 表示当前没有拖动文件 */
+const dragPath = ref<string | null>(null)
+/** 高亮中的目标目录；空串代表工作区根目录 */
+const dropTarget = ref<string | null>(null)
+
+function startPathDrag(event: DragEvent, relativePath: string): void {
+  dragPath.value = relativePath
+  dropTarget.value = null
+  // 用专用类型承载路径，避免被编辑器当成待插入的文本
+  event.dataTransfer?.setData('application/x-mdide-path', relativePath)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+}
+
+function endPathDrag(): void {
+  dragPath.value = null
+  dropTarget.value = null
+}
+
+/** 目标目录能否接收当前拖动项：不能是自己、自己的子目录，也不能是当前所在目录 */
+function canDropInto(targetDir: string): boolean {
+  const source = dragPath.value
+  if (!source) return false
+  if (source === targetDir) return false
+  if (targetDir.startsWith(`${source}/`)) return false
+  return workspace.dirname(source) !== targetDir
+}
+
+function onPathDragOver(event: DragEvent, targetDir: string): void {
+  if (!canDropInto(targetDir)) return
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  dropTarget.value = targetDir
+}
+
+function onPathDragLeave(targetDir: string): void {
+  if (dropTarget.value === targetDir) dropTarget.value = null
+}
+
+async function dropInto(targetDir: string): Promise<void> {
+  const source = dragPath.value
+  const canDrop = canDropInto(targetDir)
+  endPathDrag()
+  if (!source || !canDrop) return
+  try {
+    await workspace.move(source, targetDir)
+  } catch (error) {
+    ui.toast((error as Error).message || '移动失败', 'error')
+  }
+}
+
+/** 在系统资源管理器中选中文件 */
+async function revealFile(relativePath: string): Promise<void> {
+  try {
+    await workspace.reveal(relativePath)
+  } catch (error) {
+    ui.toast((error as Error).message || '无法打开文件所在位置', 'error')
+  }
+}
+
+/** 在系统资源管理器中打开目录（空串为工作区根目录） */
+async function openFolderInSystem(relativePath: string): Promise<void> {
+  try {
+    await workspace.openFolder(relativePath)
+  } catch (error) {
+    ui.toast((error as Error).message || '无法打开所在目录', 'error')
+  }
+}
 </script>
 
 <template>
@@ -603,9 +673,19 @@ async function switchWorkspace(): Promise<void> {
       <div class="folder-row">
         <Icon name="folder-open" :size="14" />
         <b :title="workspace.info?.rootPath">{{ workspace.info?.name ?? '未打开工作区' }}</b>
-        <button class="iconbtn small" title="打开工作区" aria-label="打开工作区" @click="switchWorkspace">
-          <Icon name="folder-plus" :size="14" />
-        </button>
+        <span v-if="workspace.info" class="folder-actions">
+          <button
+            class="iconbtn small"
+            title="在资源管理器中打开"
+            aria-label="在资源管理器中打开"
+            @click="openFolderInSystem('')"
+          >
+            <Icon name="external-link" :size="13" />
+          </button>
+          <button class="iconbtn small" title="打开工作区" aria-label="打开工作区" @click="switchWorkspace">
+            <Icon name="folder-plus" :size="14" />
+          </button>
+        </span>
       </div>
 
       <div class="searchbox">
@@ -673,7 +753,14 @@ async function switchWorkspace(): Promise<void> {
           <p v-if="!workspace.recentItems.length" class="tree-empty">还没有最近编辑的文稿</p>
         </div>
 
-        <div class="tree" v-else-if="!workspace.searchQuery">
+        <div
+          v-else-if="!workspace.searchQuery"
+          class="tree"
+          :class="{ 'drop-root': dropTarget === '' }"
+          @dragover="onPathDragOver($event, '')"
+          @dragleave="onPathDragLeave('')"
+          @drop.prevent="dropInto('')"
+        >
           <div class="tree-actions">
             <button class="textbtn" @click="beginCreate('file')">+ 新建文稿</button>
             <button class="textbtn" @click="beginCreate('folder')">+ 新建目录</button>
@@ -682,23 +769,56 @@ async function switchWorkspace(): Promise<void> {
             <div
               v-if="row.kind === 'directory'"
               class="tree-row"
+              :class="{
+                'drop-into': dropTarget === row.relativePath,
+                'drag-source': dragPath === row.relativePath
+              }"
               :style="{ paddingLeft: `${6 + row.depth * 13}px` }"
+              draggable="true"
+              @dragstart.stop="startPathDrag($event, row.relativePath)"
+              @dragend="endPathDrag"
+              @dragover.stop="onPathDragOver($event, row.relativePath)"
+              @dragleave="onPathDragLeave(row.relativePath)"
+              @drop.prevent.stop="dropInto(row.relativePath)"
               @click="workspace.toggle(row.relativePath)"
             >
               <Icon :name="workspace.expanded.has(row.relativePath) ? 'down' : 'right'" :size="10" />
               <Icon :name="workspace.expanded.has(row.relativePath) ? 'folder-open' : 'folder'" :size="13" />
               <span class="label">{{ row.name }}</span>
+              <span class="row-actions" @click.stop>
+                <button
+                  title="在资源管理器中打开"
+                  aria-label="在资源管理器中打开"
+                  @click="openFolderInSystem(row.relativePath)"
+                >
+                  <Icon name="external-link" :size="12" />
+                </button>
+              </span>
             </div>
             <div
               v-else
               class="tree-row"
-              :class="{ active: documents.activeTab?.snapshot.relativePath === row.relativePath }"
+              :class="{
+                active: documents.activeTab?.snapshot.relativePath === row.relativePath,
+                'drag-source': dragPath === row.relativePath
+              }"
               :style="{ paddingLeft: `${8 + row.depth * 13}px` }"
+              draggable="true"
+              @dragstart.stop="startPathDrag($event, row.relativePath)"
+              @dragend="endPathDrag"
+              @dragover.stop.prevent
               @click="openTreeNode(row)"
             >
               <Icon :name="isImageRow(row.ext) ? 'image' : 'file'" :size="12" />
               <span class="label">{{ row.name }}</span>
               <span class="row-actions" @click.stop>
+                <button
+                  title="在资源管理器中显示"
+                  aria-label="在资源管理器中显示"
+                  @click="revealFile(row.relativePath)"
+                >
+                  <Icon name="external-link" :size="12" />
+                </button>
                 <button title="重命名" aria-label="重命名" @click="beginRename(row.relativePath)">
                   <Icon name="pen" :size="12" />
                 </button>

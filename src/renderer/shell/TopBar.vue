@@ -73,14 +73,6 @@ function run(action?: () => void): void {
   if (action) action()
 }
 
-const recentFiles = computed<MenuEntry[]>(() =>
-  settings.settings.recentFiles.slice(0, 5).map((entry) => ({
-    label: entry.title,
-    action: () =>
-      void documents.openPath(entry.path).catch((error: Error) => ui.toast(error.message, 'error'))
-  }))
-)
-
 /** 在当前宽度档位前加勾选标记，菜单里能直接看出生效项 */
 function widthLabel(value: 'default' | 'full' | 'narrow', text: string): string {
   return ui.contentWidth === value ? `✓ ${text}` : `　 ${text}`
@@ -90,7 +82,6 @@ const fileMenu = computed<MenuEntry[]>(() => [
   { label: '新建文稿', shortcut: 'Ctrl N', action: () => void newDocument() },
   { label: '打开 Markdown…', shortcut: 'Ctrl O', action: () => void openDocument() },
   { label: '打开工作区…', action: () => void openWorkspace() },
-  ...(recentFiles.value.length ? [{ separator: true }, { label: '最近打开' }, ...recentFiles.value] : []),
   { separator: true },
   { label: '保存', shortcut: 'Ctrl S', action: () => void saveActive(), disabled: !documents.activeTab },
   {
@@ -293,7 +284,6 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
     >
       <template v-for="(item, index) in menuItems()" :key="index">
         <div v-if="item.separator" class="sep" />
-        <div v-else-if="!item.action" class="group-label">{{ item.label }}</div>
         <button v-else :disabled="item.disabled" @click="run(item.action)">
           <span>{{ item.label }}</span>
           <small v-if="item.shortcut">{{ item.shortcut }}</small>

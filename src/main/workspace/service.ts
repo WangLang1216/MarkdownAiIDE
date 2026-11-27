@@ -273,6 +273,11 @@ export class WorkspaceService {
     const absFrom = await this.resolveExisting(from)
     const absTo = resolveInside(workspace.rootPath, to)
     if (await pathExists(absTo)) throw new AppError('FILE_EXISTS', '目标名称已存在。')
+    const info = await stat(absFrom)
+    // 目录不能被移动到自己或自己的子目录里，否则会把整棵树搬进自身
+    if (info.isDirectory() && isPathInside(absFrom, dirname(absTo))) {
+      throw new AppError('INVALID_INPUT', '不能把目录移动到它自己或它的子目录中。')
+    }
     await assertRealPathInside(workspace.rootPath, dirname(absTo))
     try {
       await renameFs(absFrom, absTo)
@@ -282,6 +287,43 @@ export class WorkspaceService {
       })
     }
     return { ok: true, relativePath: toPosix(relative(workspace.rootPath, absTo)) }
+  }
+
+  /**
+   * 把文件或目录移动到工作区内的另一个目录下。
+   * 拖放排序在文件面板完成，这里只接受“目标目录”，文件名保持不变。
+   */
+  async move(from: string, toDir: string): Promise<FileOperationResult> {
+    const workspace = this.requireCurrent()
+    const absFrom = await this.resolveExisting(from)
+    const dirRel = toDir.replace(/^\/+|\/+$/g, '')
+    const absDir = dirRel ? await this.resolveExisting(dirRel) : workspace.rootPath
+    const dirInfo = await stat(absDir).catch(() => null)
+    if (!dirInfo?.isDirectory()) throw new AppError('INVALID_INPUT', '目标不是目录。')
+    if (isPathInside(absFrom, absDir)) {
+      throw new AppError('INVALID_INPUT', '不能把文件或目录移动到它自己内部。')
+    }
+    const target = join(absDir, basename(absFrom))
+    // 已经在目标目录里，直接返回，避免误报“同名文件已存在”
+    if (target === absFrom) {
+      return { ok: true, relativePath: toPosix(relative(workspace.rootPath, absFrom)) }
+    }
+    if (await pathExists(target)) {
+      throw new AppError('FILE_EXISTS', '目标目录下已有同名文件或文件夹。')
+    }
+    await assertRealPathInside(workspace.rootPath, absDir)
+    try {
+      await renameFs(absFrom, target)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'EXDEV') {
+        throw new AppError('SAVE_FAILED', '跨磁盘移动暂不支持，请先复制文件再删除原文件。')
+      }
+      throw new AppError('SAVE_FAILED', '移动失败，目标文件可能被占用。', {
+        details: error instanceof Error ? error.message : String(error)
+      })
+    }
+    return { ok: true, relativePath: toPosix(relative(workspace.rootPath, target)) }
   }
 
   /**
@@ -390,6 +432,16 @@ export class WorkspaceService {
   async reveal(relativePath: string): Promise<void> {
     const abs = await this.resolveExisting(relativePath)
     shell.showItemInFolder(abs)
+  }
+
+  /** 用系统文件管理器打开目录本身；空串表示工作区根目录。 */
+  async openFolder(relativePath: string): Promise<void> {
+    const workspace = this.requireCurrent()
+    const abs = relativePath ? await this.resolveExisting(relativePath) : workspace.rootPath
+    const info = await stat(abs).catch(() => null)
+    if (!info?.isDirectory()) throw new AppError('INVALID_INPUT', '目标不是目录。')
+    const failure = await shell.openPath(abs)
+    if (failure) throw new AppError('FILE_NOT_FOUND', failure)
   }
 
   /** 将工作区相对路径解析为已存在、仍属于工作区的绝对路径。 */

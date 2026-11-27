@@ -21,7 +21,8 @@ import type {
 import { AppError, toErrorInfo } from '@shared/errors'
 import { isPathInside } from '../utils/fs'
 import { pathExists } from '../utils/fs'
-import { appPaths, configureCacheDir } from '../utils/paths'
+import { appPaths, configureCacheDir, configureDemoWorkspace, resolveDemoWorkspacePath } from '../utils/paths'
+import { migrateDemoWorkspace } from '../app/demo'
 import type { UpdateService } from '../app/updates'
 import type { SettingsStore } from '../settings/store'
 import type { SecretService } from '../secrets/service'
@@ -364,6 +365,16 @@ export function registerIpc(context: IpcContext): void {
     return result
   })
 
+  handle(IPC.workspace.move, async (from, toDir) => {
+    const fromPath = asString(from, '原路径')
+    const targetDir = typeof toDir === 'string' ? toDir : ''
+    const result = await context.workspace.move(fromPath, targetDir)
+    if (result.relativePath && result.relativePath !== fromPath) {
+      await context.documents.handleRenamed(fromPath, result.relativePath)
+    }
+    return result
+  })
+
   handle(IPC.workspace.remove, async (relativePath) => {
     const value = asString(relativePath, '相对路径')
     const result = await context.workspace.remove(value)
@@ -379,6 +390,10 @@ export function registerIpc(context: IpcContext): void {
     context.workspace.reveal(asString(relativePath, '相对路径'))
   )
 
+  handle(IPC.workspace.openFolder, async (relativePath) =>
+    context.workspace.openFolder(typeof relativePath === 'string' ? relativePath : '')
+  )
+
   handle(IPC.workspace.recent, async () =>
     context.settings
       .get()
@@ -389,14 +404,41 @@ export function registerIpc(context: IpcContext): void {
 
   handle(IPC.settings.get, async () => context.settings.get())
   handle(IPC.settings.update, async (patch) => {
-    const next = await context.settings.update((patch ?? {}) as PartialSettings)
+    const data = (patch ?? {}) as PartialSettings
+    // 示例文件区位置变更：先把旧目录里的文稿搬到新位置，再落设置，避免设置指向空目录
+    const requestedDemoDir = data.storage?.demoWorkspaceDir
+    let migration: { from: string; to: string; moved: number } | null = null
+    if (typeof requestedDemoDir === 'string') {
+      const from = appPaths().demoWorkspace
+      const to = resolveDemoWorkspacePath(requestedDemoDir)
+      if (!samePath(from, to)) migration = { from, to, moved: await migrateDemoWorkspace(from, to) }
+    }
+    const next = await context.settings.update(data)
     if (next.storage.cacheDir) configureCacheDir(next.storage.cacheDir)
+    if (migration) {
+      configureDemoWorkspace(next.storage.demoWorkspaceDir)
+      await context.settings.relocateWorkspacePath(migration.from, migration.to)
+      // 正在浏览旧示例目录时，把工作区切到新位置；打开中的文稿统一改到新路径
+      const current = context.workspace.getCurrent()
+      if (current && samePath(current.rootPath, migration.from)) {
+        await openWorkspace(migration.to)
+      }
+      await context.documents.relocateWorkspaceRoot(migration.from, migration.to)
+      broadcast(IPC.events.toast, {
+        message: migration.moved
+          ? `示例文件区已迁移，共移动 ${migration.moved} 项内容`
+          : '示例文件区位置已更新',
+        tone: 'success'
+      })
+    }
     broadcast(IPC.events.settingsChanged, next)
     return next
   })
   handle(IPC.settings.reset, async () => {
     const next = await context.settings.reset()
     configureCacheDir('')
+    // 只把运行时的示例文件区指回默认位置，不移动已有文稿，避免重置设置时丢文件
+    configureDemoWorkspace('')
     broadcast(IPC.events.settingsChanged, next)
     return next
   })

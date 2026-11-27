@@ -93,9 +93,11 @@ export const IPC = {
     imagePreview: 'workspace:image-preview',
     createFolder: 'workspace:create-folder',
     rename: 'workspace:rename',
+    move: 'workspace:move',
     remove: 'workspace:remove',
     search: 'workspace:search',
     reveal: 'workspace:reveal',
+    openFolder: 'workspace:open-folder',
     recent: 'workspace:recent'
   },
   settings: {
@@ -375,9 +377,14 @@ export interface DesktopAPI {
     imagePreview(relativePath: string): Promise<ImagePreviewData>
     createFolder(relativePath: string): Promise<void>
     rename(from: string, to: string): Promise<FileOperationResult>
+    /** 把文件或目录移动到另一个目录下；目标目录用空串表示工作区根目录 */
+    move(from: string, toDir: string): Promise<FileOperationResult>
     remove(relativePath: string): Promise<FileOperationResult>
     search(query: string, limit?: number): Promise<WorkspaceSearchHit[]>
+    /** 在系统文件管理器中选中目标条目 */
     reveal(relativePath: string): Promise<void>
+    /** 用系统文件管理器打开目录本身；空串表示工作区根目录 */
+    openFolder(relativePath: string): Promise<void>
     recent(): Promise<RecentEntry[]>
   }
   /** 应用设置读取、修改和重置能力。 */

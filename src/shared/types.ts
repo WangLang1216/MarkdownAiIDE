@@ -790,6 +790,8 @@ export interface AppSettings {
     assetsFolder: string
     /** 缓存目录绝对路径；留空表示使用应用数据目录下的 cache */
     cacheDir: string
+    /** 示例文件区（首启示例工作区）绝对路径；留空表示使用应用数据目录下的「示例工作区」 */
+    demoWorkspaceDir: string
   }
   /** 窗口关闭和会话恢复设置。 */
   appBehavior: {

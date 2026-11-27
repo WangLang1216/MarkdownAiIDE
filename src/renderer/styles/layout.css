@@ -533,6 +533,18 @@
   margin-left: auto;
 }
 
+/* 文件夹标题右侧的操作组：打开位置与切换工作区 */
+.folder-row .folder-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.folder-row .folder-actions button {
+  margin-left: 0;
+}
+
 .tree-actions {
   display: flex;
   gap: 10px;
@@ -748,6 +760,23 @@
 .tree-row.active {
   background: var(--selection);
   color: color-mix(in srgb, var(--accent) 80%, var(--text));
+}
+
+/* 拖动移动：源条目淡化，可接收的目录/根目录高亮 */
+.tree-row.drag-source {
+  opacity: 0.4;
+}
+
+.tree-row.drop-into {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--text);
+}
+
+.tree.drop-root {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  border-radius: 7px;
 }
 
 .tree-row svg {

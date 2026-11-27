@@ -4,8 +4,9 @@
  */
 
 import { readFile } from 'node:fs/promises'
+import { join, relative } from 'node:path'
 import { appPaths } from '../utils/paths'
-import { atomicWriteFile } from '../utils/fs'
+import { atomicWriteFile, isPathInside } from '../utils/fs'
 import { logger } from '../utils/logger'
 import type { AppSettings, PartialSettings, RecentEntry } from '@shared/types'
 
@@ -48,7 +49,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   storage: {
     assetsFolder: 'assets',
-    cacheDir: ''
+    cacheDir: '',
+    demoWorkspaceDir: ''
   },
   appBehavior: {
     closeAction: 'ask',
@@ -149,6 +151,22 @@ export class SettingsStore {
     await this.persist()
   }
 
+  /** 工作区根目录整体迁移后，把历史记录里的旧路径改写为新路径 */
+  async relocateWorkspacePath(fromRoot: string, toRoot: string): Promise<void> {
+    const rewrite = (path: string): string => {
+      if (!path || !isPathInside(fromRoot, path)) return path
+      const tail = relative(fromRoot, path)
+      return tail ? join(toRoot, tail) : toRoot
+    }
+    this.settings.openFiles = this.settings.openFiles.map(rewrite)
+    this.settings.recentFiles = this.settings.recentFiles.map((entry) => ({
+      ...entry,
+      path: rewrite(entry.path)
+    }))
+    this.settings.recentWorkspaces = [...new Set(this.settings.recentWorkspaces.map(rewrite))].slice(0, 8)
+    await this.persist()
+  }
+
   /** 记录当前打开的文稿，供下次启动恢复 */
   async setOpenFiles(paths: string[]): Promise<void> {
     const next = paths.filter((path) => Boolean(path)).slice(0, 30)
@@ -211,7 +229,11 @@ export class SettingsStore {
       storage: {
         assetsFolder: sanitizeAssetsFolder(settings.storage?.assetsFolder),
         cacheDir:
-          typeof settings.storage?.cacheDir === 'string' ? settings.storage.cacheDir.trim().slice(0, 512) : ''
+          typeof settings.storage?.cacheDir === 'string' ? settings.storage.cacheDir.trim().slice(0, 512) : '',
+        demoWorkspaceDir:
+          typeof settings.storage?.demoWorkspaceDir === 'string'
+            ? settings.storage.demoWorkspaceDir.trim().slice(0, 512)
+            : ''
       },
       appBehavior: {
         closeAction: ['ask', 'tray', 'quit'].includes(settings.appBehavior?.closeAction ?? '')

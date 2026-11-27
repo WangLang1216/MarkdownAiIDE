@@ -8,7 +8,7 @@ import { app, BrowserWindow, Menu, Notification, Tray, nativeImage, shell } from
 import { IPC } from '@shared/ipc'
 import { appIconPath } from './app/icon'
 import { UpdateService } from './app/updates'
-import { appPaths, configureCacheDir, ensureAppDirectories } from './utils/paths'
+import { appPaths, configureCacheDir, configureDemoWorkspace, ensureAppDirectories } from './utils/paths'
 import { logger } from './utils/logger'
 import { SettingsStore } from './settings/store'
 import { SecretService } from './secrets/service'
@@ -131,6 +131,7 @@ async function bootstrap(): Promise<void> {
   const secrets = new SecretService()
   await settings.load()
   configureCacheDir(settings.get().storage.cacheDir)
+  configureDemoWorkspace(settings.get().storage.demoWorkspaceDir)
   await secrets.load()
 
   const providers = new ProviderService(secrets)

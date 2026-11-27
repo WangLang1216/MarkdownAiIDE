@@ -367,7 +367,15 @@ function blockDecorationField(options: LivePreviewOptions) {
     create: (state) => buildBlockDecorations(state, options),
     update(value, transaction) {
       // 输入法组合期间不重建块级 Widget，避免 DOM 替换打断上屏
-      if (transaction.isUserEvent('input.type.compose')) return value
+      if (transaction.isUserEvent('input.type.compose')) {
+        if (!transaction.docChanged) return value
+        // 但旧装饰必须随文档映射：留用旧区间会让整块 Widget 盖到错位的行上，
+        // 换行数量变化时直接重建，避免映射出与行边界不对齐的块范围。
+        if (transaction.startState.doc.lines !== transaction.state.doc.lines) {
+          return buildBlockDecorations(transaction.state, options)
+        }
+        return value.map(transaction.changes)
+      }
       const refresh = transaction.effects.some((effect) => effect.is(liveRefreshEffect))
       if (transaction.docChanged || transaction.selection !== undefined || refresh) {
         return buildBlockDecorations(transaction.state, options)
@@ -842,8 +850,20 @@ export function livePreviewExtension(options: LivePreviewOptions) {
       }
 
       update(update: ViewUpdate): void {
-        // 输入法组合期间不重建装饰：替换光标周围的 DOM 会打断组合输入，让光标跳位
-        if (update.view.composing) return
+        // 输入法组合期间不重建装饰：替换光标周围的 DOM 会打断组合输入，让光标跳位。
+        // 但装饰集合必须跟着文档映射：留用旧区间会让隐藏/替换范围相对新文本偏移，
+        // 一旦跨过行首换行，CodeMirror 会抛
+        // "Decorations that replace line breaks may not be specified via plugins"，
+        // 视图 tile 树随之失效，表现为光标停在旧位置、后续输入写到别处。
+        if (update.view.composing) {
+          if (!update.docChanged) return
+          if (update.startState.doc.lines !== update.state.doc.lines) {
+            this.decorations = buildInlineDecorations(update.view, options)
+            return
+          }
+          this.decorations = this.decorations.map(update.changes)
+          return
+        }
         if (
           update.docChanged ||
           update.selectionSet ||
